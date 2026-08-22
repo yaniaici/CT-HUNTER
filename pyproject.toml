@@ -1,15 +1,17 @@
 [project]
 name = "ct-hunter"
 version = "0.1.0"
-description = "Detección temprana de infraestructura de phishing vía Certificate Transparency logs"
+description = "Early detection of phishing infrastructure via Certificate Transparency logs"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "dnspython>=2.8.0",
     "imagehash>=4.3.2",
+    "networkx>=3.6.1",
     "pandas>=3.0.5",
     "playwright>=1.62.0",
     "python-dotenv>=1.2.3",
+    "pyvis>=0.3.2",
     "pyyaml>=6.0.3",
     "rapidfuzz>=3.14.5",
     "requests>=2.34.2",
@@ -24,6 +26,8 @@ ct-hunter-enrich = "ct_hunter.enrich_pending:main"
 ct-hunter-crosscheck = "ct_hunter.crosscheck:main"
 ct-hunter-report = "ct_hunter.generate_report:main"
 ct-hunter-reputation = "ct_hunter.enrich_reputation:main"
+ct-hunter-whois = "ct_hunter.enrich_whois:main"
+ct-hunter-triage = "ct_hunter.auto_triage:main"
 
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]

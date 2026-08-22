@@ -1,0 +1,11 @@
+[theme]
+base = "dark"
+primaryColor = "#e74c3c"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#171b24"
+textColor = "#e6e6e6"
+borderColor = "#2a2f3a"
+codeFont = "\"JetBrains Mono\", \"Fira Code\", ui-monospace, monospace"
+
+[server]
+headless = true

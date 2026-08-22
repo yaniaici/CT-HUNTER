@@ -56,7 +56,12 @@ UNICODE_CONFUSABLES = {
 # same syntactic pattern as a real impersonation attack. Confirmed with
 # real data: *.office.com.mcas.ms and *.google.com.mcas.ms belong to
 # Microsoft Defender for Cloud Apps, not phishing (see docs/architecture.md).
-KNOWN_CASB_WRAPPER_DOMAINS = {"mcas.ms", "admin-mcas.ms", "mcas-df.ms", "admin-mcas-df.ms"}
+KNOWN_CASB_WRAPPER_DOMAINS = {
+    "mcas.ms", "admin-mcas.ms", "mcas-df.ms", "admin-mcas-df.ms",
+    # Government Cloud variants, found in production data correlating
+    # against amazon.com and microsoft.com subdomains via the graph tool.
+    "mcas-gov.us", "admin-mcas-gov.us", "mcas-df-gov.us", "admin-mcas-df-gov.us",
+}
 
 LEVENSHTEIN_THRESHOLD = 2  # absolute distance, only a quick pre-filter before computing the ratio
 

@@ -37,10 +37,14 @@ def whois_lookup(domain: str) -> dict:
         match = re.search(pattern, raw, re.IGNORECASE)
         return match.group(1).strip() if match else None
 
+    # Nameservers usually appear as several repeated "Name Server:" lines.
+    nameservers = sorted({ns.strip().lower().rstrip(".") for ns in re.findall(r"Name Server:\s*(.+)", raw, re.IGNORECASE)})
+
     return {
         "creation_date": _find(r"Creation Date:\s*(.+)"),
         "registrar": _find(r"Registrar:\s*(.+)"),
         "registrant_country": _find(r"Registrant Country:\s*(.+)"),
+        "nameservers": nameservers,
         "raw": raw or result.stderr,
     }
 

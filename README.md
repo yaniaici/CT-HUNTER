@@ -32,6 +32,8 @@ uv run ct-hunter-hunt         # watches the live firehose, leave this running
 uv run ct-hunter-enrich       # separately, resolves DNS and scores what's detected
 uv run ct-hunter-reputation   # ASN + own infrastructure reuse + AbuseIPDB
 uv run ct-hunter-crosscheck   # OpenPhish + URLscan (+ VirusTotal if an API key is set)
+uv run ct-hunter-whois        # registrar + nameservers, feeds the infrastructure graph
+uv run ct-hunter-triage       # moves 'New' to 'Monitoring' for exact-match techniques (backlog only, new detections get this automatically)
 ```
 
 `ct-hunter-crosscheck` and `ct-hunter-reputation` use free external
@@ -50,10 +52,18 @@ From a domain's panel you can also request a **visual comparison**
 legitimate site) and generate a **report draft** for a confirmed case.
 See `docs/architecture.md` for the details and known limitations of each.
 
+The **Infrastructure graph** tab correlates domains that share an IP,
+ASN, registrar, or nameserver, an interactive network view plus a list of
+the resulting clusters. Known generic hosting/parking providers (Sedo,
+AWS, etc.) are excluded from correlation; see `docs/architecture.md`
+section 10 for why and how that was found.
+
 ## Project status
 
-v1: ingestion, detection, storage, scoring, visual comparison, external
-reputation (own ASN correlation, URLscan, optional VirusTotal/AbuseIPDB),
-and dashboard all working end to end. Pending for v2: infrastructure
-correlation as a graph (not just by ASN), automated alerts, more CT
-sources in parallel.
+v1: ingestion, detection, storage, scoring, visual comparison, and
+external reputation (own ASN correlation, URLscan, optional
+VirusTotal/AbuseIPDB) all working end to end.
+
+v2, in progress: infrastructure correlation graph (IP/ASN/registrar/
+nameserver, not just a flat ASN match) shipped. Still pending: automated
+alerts, more CT sources in parallel.

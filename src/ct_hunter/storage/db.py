@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ct_hunter.detect.similarity import SimilarityMatch
 from ct_hunter.ingest.certstream_client import CertEvent
+from ct_hunter.scoring import HIGH_CONFIDENCE_TECHNIQUES
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent.parent.parent / "data" / "ct_hunter.db"
 
@@ -41,6 +42,8 @@ CREATE TABLE IF NOT EXISTS detections (
     ip_address          TEXT,
     asn                 TEXT,
     asn_org             TEXT,
+    registrar           TEXT,
+    nameservers         TEXT,
     external_intel      TEXT,
     score               REAL,
     status              TEXT NOT NULL DEFAULT 'nuevo'
@@ -80,16 +83,19 @@ def init_db(conn: sqlite3.Connection) -> None:
         "ip_address TEXT",
         "asn TEXT",
         "asn_org TEXT",
+        "registrar TEXT",
+        "nameservers TEXT",
         "external_intel TEXT",
     ):
         try:
             conn.execute(f"ALTER TABLE detections ADD COLUMN {column_def}")
         except sqlite3.OperationalError:
             pass  # column already exists
-    # This index is created separately (not in SCHEMA) because on an
-    # existing database the 'asn' column does not exist yet when SCHEMA
-    # above runs; it only exists after the migration loop just above.
+    # These indexes are created separately (not in SCHEMA) because on an
+    # existing database these columns do not exist yet when SCHEMA above
+    # runs; they only exist after the migration loop just above.
     conn.execute("CREATE INDEX IF NOT EXISTS idx_detections_asn ON detections(asn)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_detections_registrar ON detections(registrar)")
     conn.commit()
 
 
@@ -101,15 +107,30 @@ def record_detection(
 ) -> None:
     """Inserts a new suspicious domain, or if it already existed (same
     domain reissuing a certificate) updates last_seen_at and bumps the
-    counter."""
+    counter.
+
+    New rows start as `en_seguimiento` (monitoring) instead of `nuevo`
+    when the technique is an exact-match one (see
+    scoring.HIGH_CONFIDENCE_TECHNIQUES): the domain name itself is already
+    deliberate typosquatting, whether or not the domain has any active
+    infrastructure yet. Never auto-set to `confirmado_malicioso`, that
+    still requires external corroboration or a human (see
+    docs/architecture.md)."""
     now = time.time()
+    initial_status = "en_seguimiento" if match.technique in HIGH_CONFIDENCE_TECHNIQUES else "nuevo"
+    initial_notes = (
+        f"Auto-triaged: '{match.technique}' is an exact-match typosquat technique, "
+        f"not coincidental fuzzy matching."
+        if initial_status == "en_seguimiento" else None
+    )
     conn.execute(
         """
         INSERT INTO detections (
             domain, registrable_domain, brand, technique, edit_distance,
-            issuer_org, source_log, first_seen_at, last_seen_at, updated_at
+            issuer_org, source_log, first_seen_at, last_seen_at, updated_at,
+            status, notes
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(domain) DO UPDATE SET
             last_seen_at = excluded.last_seen_at,
             cert_count = cert_count + 1,
@@ -126,6 +147,8 @@ def record_detection(
             event.seen_at,
             event.seen_at,
             now,
+            initial_status,
+            initial_notes,
         ),
     )
     conn.commit()
@@ -200,5 +223,18 @@ def update_reputation(
         WHERE domain = ?
         """,
         (score, ip_address, asn, asn_org, external_intel_json, time.time(), domain),
+    )
+    conn.commit()
+
+
+def update_whois(
+    conn: sqlite3.Connection,
+    domain: str,
+    registrar: str | None,
+    nameservers: list[str] | None,
+) -> None:
+    conn.execute(
+        "UPDATE detections SET registrar = ?, nameservers = ?, updated_at = ? WHERE domain = ?",
+        (registrar, ",".join(nameservers) if nameservers else None, time.time(), domain),
     )
     conn.commit()

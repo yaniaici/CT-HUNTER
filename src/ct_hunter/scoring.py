@@ -39,6 +39,17 @@ TECHNIQUE_WEIGHTS = {
 }
 DEFAULT_TECHNIQUE_WEIGHT = 10
 
+# Every technique except fuzzy-edit-distance is an exact match against a
+# precomputed transformation of the brand's real domain (see
+# detect/similarity.py): it cannot fire on a coincidentally similar but
+# unrelated domain the way a fuzzy ratio threshold can (confirmed by the
+# 'dhl.com' false-positive episode, see docs/architecture.md). That makes
+# them safe to auto-triage into "en_seguimiento" (monitoring) on their own,
+# name alone, without waiting for DNS/visual/reputation signals: the name
+# itself is already deliberate, even if the domain is currently dormant or
+# just parked (see docs/architecture.md section 12).
+HIGH_CONFIDENCE_TECHNIQUES = frozenset(TECHNIQUE_WEIGHTS) - {"fuzzy-edit-distance"}
+
 MASS_ISSUANCE_CAS = ("let's encrypt", "zerossl", "buypass")
 
 RESOLVES_IP_BONUS = 20
