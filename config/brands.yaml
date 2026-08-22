@@ -1,0 +1,69 @@
+# Target brands for v1.
+#
+# `domain` is the canonical legitimate domain used as the reference for
+# similarity matching (Levenshtein, homoglyphs, permutations). `aliases`
+# are other legitimate domains of the same brand that must NOT be flagged
+# as suspicious (avoids false positives against the brand's own domains).
+brands:
+  - name: Microsoft
+    category: tech
+    domain: microsoft.com
+    aliases:
+      - live.com
+      - outlook.com
+      - office.com
+
+  - name: Google
+    category: tech
+    domain: google.com
+    aliases:
+      - gmail.com
+      - youtube.com
+
+  - name: Apple
+    category: tech
+    domain: apple.com
+    aliases:
+      - icloud.com
+      - apple.com.cn  # Apple's real China domain (Apple Store, EPP, support), not a typosquat
+
+  - name: PayPal
+    category: fintech
+    domain: paypal.com
+    aliases: []
+
+  - name: Amazon
+    category: tech
+    domain: amazon.com
+    aliases:
+      - amazon.es
+
+  - name: Netflix
+    category: tech
+    domain: netflix.com
+    aliases: []
+
+  - name: Correos
+    category: logistics
+    domain: correos.es
+    aliases: []
+
+  - name: DHL
+    category: logistics
+    domain: dhl.com
+    aliases:
+      - dhl.de
+
+  - name: BBVA
+    category: banking
+    domain: bbva.es
+    aliases:
+      - bbva.com
+
+  - name: Santander
+    category: banking
+    domain: santander.es
+    aliases:
+      - bancosantander.es
+      - santander.com
+      - santander.com.co  # Banco Santander Colombia, verified 2026-08-21

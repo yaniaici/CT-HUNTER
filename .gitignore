@@ -1,0 +1,31 @@
+.claude
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# uv
+.python-version.local
+
+# Project data (local sqlite db, not versioned)
+data/*.db
+data/*.db-journal
+data/*.sqlite3
+
+# Runtime artifacts del proceso ct-hunter-hunt lanzado desde la UI
+data/hunt.pid
+data/hunt_status.json
+data/hunt_status.*.tmp
+data/hunt.log
+data/streamlit.log
+
+# Screenshots capturados (referencia + candidatos) — binarios, se regeneran
+data/screenshots/
+
+# Env / secrets
+.env
+
+# OS
+.DS_Store
