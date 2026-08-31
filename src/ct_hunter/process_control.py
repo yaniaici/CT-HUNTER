@@ -1,65 +1,63 @@
-"""Start/stop/query `ct-hunter-hunt` from the web UI.
+"""Start/stop/query `ct-hunter-hunt` from the web UI, via systemd.
 
-`ct-hunter-hunt` remains a separate OS process rather than a thread inside
-Streamlit: Streamlit re-executes the whole script on every user
-interaction, which does not fit a long-running asyncio loop consuming a
-WebSocket. The UI just launches/kills that process with subprocess and
-reads its state from a pidfile plus the hunt_status.json the process
-writes itself, so the reported state looks the same whether the UI
-started it or you launched it by hand in a terminal.
+`ct-hunter-hunt` and the dashboard itself run as systemd user services
+(`~/.config/systemd/user/ct-hunter-hunt.service` /
+`ct-hunter-dashboard.service`), not as bare background processes: a bare
+`nohup ... &` does not survive a reboot or an unhandled crash, which is
+exactly what happened in practice (see docs/architecture.md). The whole
+machine restarted and neither process came back, while the Docker
+container did, because only the container had a restart policy attached
+to it.
+
+The UI's start/stop buttons shell out to `systemctl --user`, they do not
+spawn or kill the process directly. Doing that instead would fight
+systemd: if the UI killed the process with a raw signal, systemd's
+`Restart=on-failure` would treat that as a crash and immediately bring it
+back, undoing the "stop" the user asked for. Letting systemd own the
+process lifecycle end to end (boot, crash recovery, explicit start/stop)
+means there is exactly one supervisor, not two disagreeing ones.
 """
 
 from __future__ import annotations
 
-import os
-import signal
 import subprocess
-import sys
 
-from ct_hunter.process_state import DATA_DIR, LOG_FILE, PID_FILE, is_pid_alive, read_status
+from ct_hunter.process_state import DATA_DIR, read_status
 
 PROJECT_ROOT = DATA_DIR.parent
 
+HUNT_SERVICE = "ct-hunter-hunt.service"
+SYSTEMCTL_TIMEOUT_SECONDS = 10
 
-def hunt_pid() -> int | None:
-    if not PID_FILE.exists():
-        return None
+
+def _systemctl(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["systemctl", "--user", *args],
+        capture_output=True, text=True, timeout=SYSTEMCTL_TIMEOUT_SECONDS,
+    )
+
+
+def hunt_is_active() -> bool:
     try:
-        pid = int(PID_FILE.read_text().strip())
-    except ValueError:
-        return None
-    if is_pid_alive(pid):
-        return pid
-    PID_FILE.unlink(missing_ok=True)  # stale pidfile left behind by a process that died uncleanly
-    return None
+        result = _systemctl("is-active", HUNT_SERVICE)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+    return result.stdout.strip() == "active"
 
 
 def start_hunt() -> None:
-    if hunt_pid() is not None:
-        return
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    log = open(LOG_FILE, "a")
-    proc = subprocess.Popen(
-        [sys.executable, "-u", "-m", "ct_hunter.hunt"],
-        cwd=PROJECT_ROOT,
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,  # survives the UI being closed or reloaded
-    )
-    PID_FILE.write_text(str(proc.pid))
+    _systemctl("start", HUNT_SERVICE)
 
 
 def stop_hunt() -> bool:
-    pid = hunt_pid()
-    if pid is None:
+    if not hunt_is_active():
         return False
-    os.kill(pid, signal.SIGTERM)
-    PID_FILE.unlink(missing_ok=True)
+    _systemctl("stop", HUNT_SERVICE)
     return True
 
 
 def hunt_status() -> dict:
-    return {"running": hunt_pid() is not None, **read_status()}
+    return {"running": hunt_is_active(), **read_status()}
 
 
 def docker_status(container_name: str = "certstream") -> str:

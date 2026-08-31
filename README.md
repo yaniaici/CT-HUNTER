@@ -19,15 +19,24 @@ docker run -d --name certstream --restart unless-stopped -p 8080:8080 \
 uv sync
 uv run playwright install chromium   # for visual comparison (screenshot + phash)
 
-# 3. Launch the web interface
-uv run streamlit run src/ct_hunter/dashboard/app.py
+# 3. Install the systemd user services (auto-restart on crash, start on boot)
+mkdir -p ~/.config/systemd/user
+cp systemd/ct-hunter-hunt.service systemd/ct-hunter-dashboard.service ~/.config/systemd/user/
+loginctl enable-linger "$USER"   # start at boot even without logging in
+systemctl --user daemon-reload
+systemctl --user enable --now ct-hunter-hunt.service ct-hunter-dashboard.service
 ```
 
-From the web interface (**System** tab) you can start/stop
-`ct-hunter-hunt` with a button, no terminal needed. It can also be run by
-hand if you prefer:
+The dashboard is now at http://localhost:8501. From its **System** tab
+you can start/stop `ct-hunter-hunt` with a button; that shells out to
+`systemctl --user`, it does not spawn a separate process (see
+`docs/architecture.md` section 13 for why that distinction matters).
+
+Without the systemd services, both can still be run by hand for a quick
+test, they just will not survive a crash or a reboot:
 
 ```bash
+uv run streamlit run src/ct_hunter/dashboard/app.py
 uv run ct-hunter-hunt         # watches the live firehose, leave this running
 uv run ct-hunter-enrich       # separately, resolves DNS and scores what's detected
 uv run ct-hunter-reputation   # ASN + own infrastructure reuse + AbuseIPDB
@@ -65,5 +74,10 @@ external reputation (own ASN correlation, URLscan, optional
 VirusTotal/AbuseIPDB) all working end to end.
 
 v2, in progress: infrastructure correlation graph (IP/ASN/registrar/
-nameserver, not just a flat ASN match) shipped. Still pending: automated
-alerts, more CT sources in parallel.
+nameserver, not just a flat ASN match) shipped. Also shipped: a
+reliability audit that found and fixed three real production bugs
+(no process supervision across reboots/crashes, no error handling in
+the ingestion path, a dashboard crash on stale filter state), see
+`docs/architecture.md` section 13. Still pending: SQLite WAL mode, log
+rotation, pagination at larger table sizes, automated alerts, more CT
+sources in parallel.

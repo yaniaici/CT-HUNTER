@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import time
+import traceback
 
 from ct_hunter.brands import load_brands
 from ct_hunter.detect.similarity import build_variant_index, evaluate_hostname
@@ -38,16 +39,24 @@ async def _run() -> None:
     async for event in stream_certificates():
         seen += 1
         for hostname in event.all_domains:
-            match = evaluate_hostname(hostname, brands, variant_index)
-            if match is None:
-                continue
-            hits += 1
-            record_detection(conn, match, event, hostname)
-            print(
-                f"[HIT #{hits}] brand={match.brand} technique={match.technique} "
-                f"domain={hostname!r} issuer={event.issuer_org!r}"
-            )
-            write_status(started_at, seen, hits)
+            try:
+                match = evaluate_hostname(hostname, brands, variant_index)
+                if match is None:
+                    continue
+                hits += 1
+                record_detection(conn, match, event, hostname)
+                print(
+                    f"[HIT #{hits}] brand={match.brand} technique={match.technique} "
+                    f"domain={hostname!r} issuer={event.issuer_org!r}"
+                )
+                write_status(started_at, seen, hits)
+            except Exception:
+                # One bad hostname (or a transient SQLite lock hitting the
+                # 5s busy_timeout while the dashboard is also writing)
+                # must not lose the rest of this certificate's domains, let
+                # alone the whole run. Logged, then move on.
+                print(f"Error processing {hostname!r} from this certificate:", file=sys.stderr)
+                traceback.print_exc()
 
         if seen % STATUS_WRITE_INTERVAL == 0:
             write_status(started_at, seen, hits)
@@ -70,6 +79,14 @@ def main() -> None:
         asyncio.run(_run())
     except KeyboardInterrupt:
         print("\nStopped by user.")
+    except Exception:
+        # Anything that reaches here is a bug, not an expected condition
+        # (per-hostname errors are already caught inside _run). Logged with
+        # a full traceback and a non-zero exit so systemd's Restart=on-failure
+        # picks it back up instead of ingestion silently staying dead.
+        print("Fatal error in ct-hunter-hunt:", file=sys.stderr)
+        traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":

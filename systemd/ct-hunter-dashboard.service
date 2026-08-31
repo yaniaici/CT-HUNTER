@@ -1,0 +1,18 @@
+[Unit]
+Description=ct-hunter web dashboard (Streamlit)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/yani/Proyectos/CTI
+ExecStart=/usr/bin/uv run streamlit run src/ct_hunter/dashboard/app.py --server.headless true --server.port 8501
+Restart=on-failure
+RestartSec=5
+# same reasoning as ct-hunter-hunt.service: SIGTERM via `uv run` exits 143
+SuccessExitStatus=143
+StandardOutput=append:/home/yani/Proyectos/CTI/data/streamlit.log
+StandardError=append:/home/yani/Proyectos/CTI/data/streamlit.log
+
+[Install]
+WantedBy=default.target

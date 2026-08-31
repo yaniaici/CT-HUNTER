@@ -283,6 +283,13 @@ with tab_detections:
                 key="detections_table",
             )
             selected_rows = selection.selection.rows if selection and selection.selection else []
+            # A selection index can go stale (point past the end of the
+            # now-shorter list) right after a sidebar filter narrows the
+            # table: Streamlit keeps the widget's old selection state
+            # across the rerun, it does not clear it when the underlying
+            # data shrinks. Without this bounds check that crashed the
+            # whole app with an IndexError (seen in production).
+            selected_rows = [i for i in selected_rows if i < len(filtered)]
 
         with detail_col:
             st.subheader("🔬 Detection context")

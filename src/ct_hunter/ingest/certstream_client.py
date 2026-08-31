@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -47,17 +48,32 @@ async def stream_certificates(url: str = DEFAULT_URL) -> AsyncIterator[CertEvent
     """Connects to the firehose and yields one CertEvent per new certificate.
 
     Reconnects indefinitely on connection loss (a CT log stream never
-    "ends" in a normal sense: if it closes, that is a transient failure).
+    "ends" in a normal sense: if it closes, that is a transient failure) or
+    on a failed connection attempt (e.g. the certstream Docker container is
+    not up yet, which happens on every boot before Docker has finished
+    starting it, even with a restart policy).
+
+    Parsing a single message is wrapped separately from the connection
+    itself: a malformed or unexpected-shape message (bad JSON, a schema
+    change, a heartbeat/control message not in the documented shape) must
+    not kill the whole generator. Before this, a single bad message would
+    propagate out of the `async for`, out of hunt.py's main loop, and take
+    down the entire multi-day ingestion process with nothing to restart it.
     """
     while True:
         try:
             async with connect(url) as ws:
                 async for raw in ws:
-                    message = json.loads(raw)
-                    event = CertEvent.from_message(message)
+                    try:
+                        message = json.loads(raw)
+                        event = CertEvent.from_message(message)
+                    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+                        print(f"Skipping malformed firehose message: {exc!r}", file=sys.stderr)
+                        continue
                     if event is not None:
                         yield event
-        except ConnectionClosed:
+        except (ConnectionClosed, OSError) as exc:
+            print(f"Firehose connection lost or unavailable ({exc!r}), retrying in 2s...", file=sys.stderr)
             await asyncio.sleep(2)
             continue
 

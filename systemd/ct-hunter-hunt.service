@@ -1,0 +1,19 @@
+[Unit]
+Description=ct-hunter firehose watcher (Certificate Transparency monitoring)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/yani/Proyectos/CTI
+ExecStart=/usr/bin/uv run ct-hunter-hunt
+Restart=on-failure
+RestartSec=5
+# `uv run` forwards SIGTERM to the child, which exits with code 143; without
+# this, a clean `systemctl stop` shows up as "failed" instead of "stopped".
+SuccessExitStatus=143
+StandardOutput=append:/home/yani/Proyectos/CTI/data/hunt.log
+StandardError=append:/home/yani/Proyectos/CTI/data/hunt.log
+
+[Install]
+WantedBy=default.target
