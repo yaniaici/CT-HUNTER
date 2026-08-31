@@ -1,78 +1,79 @@
 # ct-hunter
 
-Real-time detection of phishing infrastructure via Certificate
-Transparency log monitoring, built to catch typosquatting domains
-**before** they get weaponized, not after they show up in a public feed.
+Watches Certificate Transparency logs in real time and flags
+typosquatting domains as soon as a certificate is issued for them,
+usually before there's even a page live on the domain.
 
-## Why this exists
+## Why CT logs
 
-Most phishing "detection" is actually aggregation: consuming a feed
-(OpenPhish, PhishTank, VirusTotal) that already did the work of finding
-and confirming a domain. That is useful, but it is not detection, and it
-is not something worth putting in a portfolio as original work.
+Every phishing tool I'd used before this consumes a feed: OpenPhish,
+PhishTank, VirusTotal, something that already did the work of finding
+and confirming a bad domain. That's fine as a tool, but it's not
+detection, someone else already did the interesting part.
 
-Every certificate issued for a public TLS domain gets logged to
-Certificate Transparency within minutes, most attackers request one
-immediately since browsers flag plaintext HTTP. That log is public and
-streamable. Watching it directly means seeing a suspicious domain the
-moment its certificate is issued, often before there is any content on
-it at all, instead of waiting for someone else to notice the attack in
-progress.
+Certificate Transparency logs are public, and since browsers require
+a valid cert for HTTPS, most attackers request one almost immediately
+after registering a lookalike domain. That request gets logged within
+minutes. So instead of waiting to see a domain in a feed, you can watch
+the log directly and catch it at the moment the certificate is issued,
+sometimes days before there's any content on the site.
 
-This project is the result of building that pipeline end to end: a
-self-hosted Certificate Transparency firehose, a typosquatting engine
-layered from cheap heuristics to fuzzy matching, external corroboration
-before anything gets called "confirmed," and a Streamlit UI built for
-actually triaging what comes out the other end, not just displaying it.
-It has been run against live traffic since day one, which is also where
-most of the interesting engineering problems came from: false positives
-that only show up against real domains, a firehose that needs to run
-for days without supervision, and a database written to from two
-processes at once.
+That's what this is: a self-hosted CT firehose, a typosquatting
+detector, a corroboration step before anything gets called confirmed,
+and a dashboard to actually go through what comes out the other end.
+It's been pointed at live traffic since the start, and most of the
+interesting problems came from that, not from the initial design: false
+positives that only show up on real domains, a process that has to
+survive running for days unattended, a database two processes hit at
+once.
 
-`docs/architecture.md` is a running decision log covering every design
-choice and every bug found this way, written so each one can be
-explained and defended on its own, not just "it works."
+`docs/architecture.md` is a running log of the decisions and the bugs,
+kept up to date as I went, mostly so I can still explain any of it
+later without having to re-derive the reasoning from the code.
 
-## What it demonstrates
+## A few things worth pointing out
 
-- **A layered detection engine, not a single regex.** A precomputed
-  variant index (O(1) lookup, generated at startup for every brand:
-  omissions, repetitions, transpositions, homoglyphs, hyphenation, TLD
-  swaps, brand+keyword combos) handles the common cases at firehose
-  speed; a length-normalized Levenshtein ratio catches whatever the
-  index does not anticipate; a separate DNS-label-boundary-aware check
-  catches subdomain impersonation (`brand.com.attacker.net`), which a
-  naive substring match gets wrong.
-- **An explicit boundary between heuristics and verdicts.** The
-  system's own scoring can prioritize and auto-triage, it can never
-  auto-confirm a domain as malicious on its own. Only independent
-  external corroboration (a public threat feed, VirusTotal above a
-  vote threshold, URLscan's own verdict) or a human reviewing the
-  evidence can do that. A cheap heuristic score is not proof, and the
-  design does not pretend otherwise.
-- **False positives found and fixed against real traffic, not test
-  fixtures.** Every one of them, a CASB reverse proxy pattern
-  (`*.office.com.mcas.ms`), a nested legitimate domain
-  (`apple.com.cn`), short-domain edit distance false matches (`dhl.com`
-  matching almost anything at distance 2), only surfaced once the
-  detector ran against live Certificate Transparency traffic instead of
-  hand-picked examples. Each is documented with what broke, how it was
-  found, and the fix.
-- **Reliability and performance treated as real engineering, not an
-  afterthought.** systemd process supervision instead of bare
-  background processes, WAL-mode SQLite tuned for two processes reading
-  and writing concurrently, graceful degradation when an on-demand task
-  times out instead of crashing the whole UI, and a parallelized
-  enrichment pipeline validated with real before/after timing
-  measurements against production data, all documented with the
-  reasoning, not just the diff.
-- **A triage UI built for investigation, not just display.** The
-  dashboard reads like a SIEM alert queue: select a domain, see its DNS
-  resolution, WHOIS, visual comparison against the real brand's site
-  (perceptual hash on a live screenshot), external reputation, and
-  which other tracked domains share its infrastructure (IP, ASN,
-  registrar, nameservers), all before deciding a verdict.
+The detection itself runs in layers because no single check scales to
+real-time traffic. Most of the load is handled by a precomputed index
+built at startup, every brand's likely variants (omissions, repeats,
+transpositions, homoglyphs, TLD swaps, hyphenation, brand+keyword
+combos) get generated once and looked up in O(1). Whatever that misses
+falls through to a length-normalized Levenshtein ratio, which is too
+slow to run against every domain by itself but fine as a fallback.
+Subdomain impersonation (`brand.com.attacker.net`) gets its own check,
+comparing on DNS label boundaries, since a plain substring match
+flags things it shouldn't (`live.com` inside `xingkong-live.com`, for
+instance).
+
+Nothing gets auto-confirmed by the score. It can move a domain into a
+watch queue on its own, but calling something malicious needs either
+independent corroboration, a public feed match, VirusTotal above a
+vote threshold, an explicit URLscan verdict, or a human actually
+looking at it. A heuristic score is a guess, not evidence, and I didn't
+want the tool quietly treating it like one.
+
+Most of the actual bugs only turned up once this ran against live
+traffic instead of a handful of test cases. Microsoft's CASB reverse
+proxy pattern (`*.office.com.mcas.ms`) looked exactly like impersonation
+until it showed up in real data. `apple.com.cn` tripped the subdomain
+check because it happens to contain `apple.com` as a label prefix.
+Short domains like `dhl.com` matched almost anything at edit distance
+2, which needed a length-normalized ratio instead of a flat cutoff.
+None of these are things you'd think to test for up front.
+
+I also spent a fair amount of time on the parts that aren't the
+"interesting" half of a detector but decide whether it actually runs
+unattended: systemd instead of a background process that dies on
+reboot, WAL-mode SQLite because two processes hit the same file
+concurrently, a UI that shows a warning instead of crashing when a
+subprocess call times out. Documented in the architecture log along
+with why, since that's usually the part that gets skipped.
+
+The dashboard itself is built to investigate a domain, not just list
+it: pick one and see its DNS resolution, WHOIS, a visual comparison
+(screenshot plus perceptual hash against the real brand's site),
+external reputation, and whatever other tracked domains share its
+infrastructure, before deciding what to do with it.
 
 ## Quickstart
 
@@ -137,14 +138,13 @@ section 10 for why and how that was found.
 
 ## Case reports
 
-[`reports/`](reports/) documents individual domains that reached a
-confirmed verdict, with the certificate-seen timestamp and the
-confirmation timestamp side by side, both verifiable against
-`data/ct_hunter.db`. The point of that directory is the gap between the
-two dates: evidence that watching Certificate Transparency catches
-infrastructure before it is used, not a summary of something already
-public elsewhere. See [`reports/README.md`](reports/README.md) for how
-a case gets built and what belongs in one.
+[`reports/`](reports/) has a writeup for each domain that reached a
+confirmed verdict: when the certificate was first seen, when it was
+confirmed, both checkable against `data/ct_hunter.db`. That gap between
+the two dates is the actual evidence that this catches things early,
+rather than just restating something a feed already published. See
+[`reports/README.md`](reports/README.md) for how a report gets put
+together.
 
 ## Stack
 
