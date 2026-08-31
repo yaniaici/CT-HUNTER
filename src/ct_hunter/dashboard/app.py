@@ -41,6 +41,17 @@ from ct_hunter.visual import VISUAL_SIMILARITY_THRESHOLD, compare_visual
 
 st.set_page_config(page_title="CT Hunter", page_icon="🎣", layout="wide")
 
+# An unresponsive (not NXDOMAIN) nameserver can cost up to ~9s per domain
+# (enrich.py tries A, then AAAA, then MX, 3s timeout each). enrich_pending.py
+# now resolves up to MAX_WORKERS domains concurrently, so the worst case for
+# a batch of N domains is roughly ceil(N / MAX_WORKERS) * 9s, not N * 9s;
+# this button used to time out in production against a sequential batch
+# (see docs/architecture.md section 14), the cap below still leaves a wide
+# safety margin under the new parallel worst case. Running
+# `uv run ct-hunter-enrich` from a terminal has no such cap.
+ENRICH_BATCH_LIMIT = 200
+ENRICH_TIMEOUT_SECONDS = 450
+
 LIST_COLUMNS = ["domain", "brand", "technique", "score", "status"]
 # Internal status values are kept in Spanish (see docs/architecture.md,
 # they are already stored as data in the database); this maps them to the
@@ -89,6 +100,32 @@ def status_badge(status: str) -> None:
     st.badge(STATUS_LABELS.get(status, status), color=STATUS_BADGE_COLORS.get(status, "gray"))
 
 
+def run_background_task(module: str, *args: str, timeout: int) -> str:
+    """Runs a ct_hunter module as a subprocess and returns its output.
+
+    A `subprocess.TimeoutExpired` here used to crash the whole dashboard
+    session, not just the one button (any unhandled exception at the top
+    level of a Streamlit script takes the whole session down); this
+    happened for real with the "Enrich pending" button. Progress already
+    made is not lost, since each row commits to the database as it is
+    processed, so on a timeout the caller can just run the task again.
+    """
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", module, *args],
+            cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=timeout,
+        )
+        return result.stdout or result.stderr
+    except subprocess.TimeoutExpired as exc:
+        partial_output = exc.stdout or exc.stderr or ""
+        return (
+            f"Timed out after {timeout}s without finishing. Rows already "
+            f"processed before the timeout are saved, run the task again to "
+            f"pick up where it left off, or run it from a terminal instead "
+            f"(no timeout there).\n\n{partial_output}"
+        )
+
+
 def severity_badge(score: float | None) -> None:
     label, color, _ = severity_for_score(score)
     text = f"{label} ({score:.0f})" if score is not None and not pd.isna(score) else label
@@ -106,21 +143,28 @@ def yes_no_unknown(val) -> str:
 
 def style_detections_table(df: pd.DataFrame):
     """pandas Styler coloring the score column by severity band, so the
-    list reads like a real alert grid at a glance instead of a plain table."""
+    list reads like a real alert grid at a glance instead of a plain table.
 
-    def _score_style(val):
-        if val is None or pd.isna(val):
-            return "color: #6b7280"
-        _, _, hexcode = severity_for_score(val)
-        return f"color: {hexcode}; font-weight: 600"
+    Colors are computed with vectorized pandas operations (one pd.cut/map
+    call per column) instead of a Python callback per cell (Styler.map),
+    since this runs on every Streamlit rerun that touches the Detections
+    tab, not just when the underlying data changes."""
 
-    def _status_style(val):
-        return f"color: {STATUS_HEX.get(val, '#6b7280')}; font-weight: 600"
+    def _score_colors(column: pd.Series) -> pd.Series:
+        bins = [band[0] for band in reversed(SEVERITY_BANDS)] + [MAX_SCORE + 1]
+        hexcodes = [band[3] for band in reversed(SEVERITY_BANDS)]
+        colors = pd.cut(column, bins=bins, labels=hexcodes, right=False, include_lowest=True).astype(str)
+        colors = colors.where(column.notna(), "#6b7280")
+        return "color: " + colors + "; font-weight: 600"
+
+    def _status_colors(column: pd.Series) -> pd.Series:
+        colors = column.map(STATUS_HEX).fillna("#6b7280")
+        return "color: " + colors + "; font-weight: 600"
 
     return (
         df.style
-        .map(_score_style, subset=["score"])
-        .map(_status_style, subset=["status"])
+        .apply(_score_colors, subset=["score"])
+        .apply(_status_colors, subset=["status"])
         .format({"score": lambda v: "N/A" if pd.isna(v) else f"{v:.0f}", "status": lambda v: STATUS_LABELS.get(v, v)})
     )
 
@@ -136,6 +180,24 @@ def _connection():
 def _brands_and_index():
     brands = load_brands()
     return brands, build_variant_index(brands)
+
+
+@st.cache_data(ttl=3)
+def _cached_hunt_status() -> dict:
+    return hunt_status()
+
+
+@st.cache_data(ttl=3)
+def _cached_docker_status() -> str:
+    return docker_status()
+
+
+def _refresh_status_cache() -> None:
+    """Forces a fresh read on the next call, used right after an explicit
+    start/stop/refresh action so the button feels immediate instead of
+    waiting out the TTL."""
+    _cached_hunt_status.clear()
+    _cached_docker_status.clear()
 
 
 def _data_version(conn) -> tuple:
@@ -200,8 +262,8 @@ with _header_left:
     st.title("🎣 CT Hunter")
     st.caption("Suspicious domains detected in Certificate Transparency logs, before they are used.")
 with _header_right:
-    _hstatus = hunt_status()
-    _docker_state = docker_status()
+    _hstatus = _cached_hunt_status()
+    _docker_state = _cached_docker_status()
     st.write("")  # vertical alignment with the title
     b1, b2, b3 = st.columns(3)
     with b1:
@@ -225,9 +287,14 @@ tab_detections, tab_graph, tab_test, tab_system = st.tabs(
     ["📋 Detections", "🕸️ Infrastructure graph", "🔍 Test a domain", "⚙️ System"]
 )
 
+conn = _connection()
+# Computed once and reused everywhere below instead of re-querying
+# COUNT(*)/MAX(updated_at) on every tab, since it is the same connection
+# (a cached resource) and the same underlying data within one script run.
+data_version = _data_version(conn)
+
 with tab_detections:
-    conn = _connection()
-    df = _load_cached(conn, _data_version(conn))
+    df = _load_cached(conn, data_version)
 
     if df.empty:
         st.info(
@@ -486,7 +553,7 @@ with tab_detections:
 
                 with st.container(border=True):
                     st.markdown("**🕸️ Infrastructure cluster**")
-                    full_graph = _build_graph_cached(conn, _data_version(conn), None, None)
+                    full_graph = _build_graph_cached(conn, data_version, None, None)
                     cluster_others = cluster_for_domain(full_graph, domain)
                     if cluster_others:
                         shared = shared_attributes_for_domain(full_graph, domain)
@@ -561,8 +628,8 @@ with tab_graph:
         "domains regardless of correlation; that shows up as isolated nodes, not as \"no reuse\"."
     )
 
-    graph_conn = _connection()
-    graph_version = _data_version(graph_conn)
+    graph_conn = conn
+    graph_version = data_version
 
     if graph_version[0] == 0:
         st.info("No detections yet.")
@@ -676,8 +743,8 @@ with tab_test:
 with tab_system:
     st.subheader("⚙️ System status")
 
-    docker_state = docker_status()
-    hstatus = hunt_status()
+    docker_state = _cached_docker_status()
+    hstatus = _cached_hunt_status()
     running = hstatus["running"]
 
     with st.container(border=True):
@@ -703,11 +770,14 @@ with tab_system:
         col_start, col_stop, col_refresh = st.columns(3)
         if col_start.button("▶️ Start ct-hunter-hunt", disabled=running):
             start_hunt()
+            _refresh_status_cache()
             st.rerun()
         if col_stop.button("⏹️ Stop ct-hunter-hunt", disabled=not running):
             stop_hunt()
+            _refresh_status_cache()
             st.rerun()
         if col_refresh.button("🔄 Refresh"):
+            _refresh_status_cache()
             st.rerun()
 
     if docker_state not in ("running",):
@@ -727,20 +797,17 @@ with tab_system:
         col_enrich, col_reputation = st.columns(2)
         if col_enrich.button("🧬 Enrich pending (DNS + score)"):
             with st.spinner("Resolving DNS and computing scores..."):
-                result = subprocess.run(
-                    [sys.executable, "-m", "ct_hunter.enrich_pending"],
-                    cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=180,
+                output = run_background_task(
+                    "ct_hunter.enrich_pending", str(ENRICH_BATCH_LIMIT),
+                    timeout=ENRICH_TIMEOUT_SECONDS,
                 )
-            st.code(result.stdout or result.stderr, language=None)
+            st.code(output, language=None)
             st.cache_resource.clear()
 
         if col_reputation.button("🕵️ Reputation (ASN + AbuseIPDB) in bulk"):
             with st.spinner("Checking ASN/reputation for everything that resolves to an IP..."):
-                result = subprocess.run(
-                    [sys.executable, "-m", "ct_hunter.enrich_reputation"],
-                    cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=300,
-                )
-            st.code(result.stdout or result.stderr, language=None)
+                output = run_background_task("ct_hunter.enrich_reputation", timeout=300)
+            st.code(output, language=None)
             st.cache_resource.clear()
 
         st.caption(
@@ -749,11 +816,8 @@ with tab_system:
         )
         if st.button("🌐 Crosscheck OpenPhish + URLscan + VirusTotal (max 15)"):
             with st.spinner("Comparing against external sources (may take a few minutes)..."):
-                result = subprocess.run(
-                    [sys.executable, "-m", "ct_hunter.crosscheck", "15"],
-                    cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=360,
-                )
-            st.code(result.stdout or result.stderr, language=None)
+                output = run_background_task("ct_hunter.crosscheck", "15", timeout=360)
+            st.code(output, language=None)
             st.cache_resource.clear()
 
         st.caption(
@@ -763,9 +827,6 @@ with tab_system:
         )
         if st.button("🏷️ Auto-triage backlog to Monitoring"):
             with st.spinner("Triaging..."):
-                result = subprocess.run(
-                    [sys.executable, "-m", "ct_hunter.auto_triage"],
-                    cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=60,
-                )
-            st.code(result.stdout or result.stderr, language=None)
+                output = run_background_task("ct_hunter.auto_triage", timeout=60)
+            st.code(output, language=None)
             st.cache_resource.clear()

@@ -187,18 +187,26 @@ def build_variant_index(brands: list[Brand]) -> dict[str, tuple[str, str]]:
     return index
 
 
-def _is_whitelisted(candidate: str, brands: list[Brand]) -> bool:
-    legit = {d for b in brands for d in b.legitimate_domains}
-    return candidate in legit
+def build_whitelist(brands: list[Brand]) -> set[str]:
+    """Every brand's legitimate domains, merged. Precomputed once (same
+    pattern as build_variant_index) instead of being rebuilt on every
+    single hostname the firehose sees, twice over (once from
+    match_registrable_domain, once from match_subdomain_impersonation)."""
+    return {d for b in brands for d in b.legitimate_domains}
+
+
+def _is_whitelisted(candidate: str, whitelist: set[str]) -> bool:
+    return candidate in whitelist
 
 
 def match_registrable_domain(
     candidate: str,
     brands: list[Brand],
     variant_index: dict[str, tuple[str, str]],
+    whitelist: set[str],
 ) -> SimilarityMatch | None:
     """Compares a registrable domain (eTLD+1) against brands + variants."""
-    if _is_whitelisted(candidate, brands):
+    if _is_whitelisted(candidate, whitelist):
         return None
 
     hit = variant_index.get(candidate)
@@ -232,7 +240,7 @@ def match_registrable_domain(
     return best
 
 
-def match_subdomain_impersonation(hostname: str, brands: list[Brand]) -> SimilarityMatch | None:
+def match_subdomain_impersonation(hostname: str, brands: list[Brand], whitelist: set[str]) -> SimilarityMatch | None:
     """Detects 'bbva.es.attacker-domain.com': the brand shows up as a
     subdomain instead of being the certificate's real registrable domain.
 
@@ -244,7 +252,7 @@ def match_subdomain_impersonation(hostname: str, brands: list[Brand]) -> Similar
     real_registrable = registrable_domain(hostname)
     if real_registrable in KNOWN_CASB_WRAPPER_DOMAINS:
         return None
-    if _is_whitelisted(real_registrable, brands):
+    if _is_whitelisted(real_registrable, whitelist):
         # The certificate's actual registrable domain is itself
         # legitimate (e.g. 'apple.com.cn'): containing 'apple.com' as a
         # label prefix is structural coincidence, not impersonation.
@@ -262,12 +270,21 @@ def evaluate_hostname(
     hostname: str,
     brands: list[Brand],
     variant_index: dict[str, tuple[str, str]],
+    whitelist: set[str] | None = None,
 ) -> SimilarityMatch | None:
     """Single entry point: applies all three detection layers to a raw
-    hostname exactly as it comes from `all_domains` in the certificate."""
-    subdomain_hit = match_subdomain_impersonation(hostname, brands)
+    hostname exactly as it comes from `all_domains` in the certificate.
+
+    whitelist is optional and built on the fly from brands if not given,
+    so existing one-off callers (the dashboard's "Test a domain" tab)
+    don't have to precompute it; hunt.py, which calls this once per
+    hostname for the whole firehose, passes a precomputed one instead."""
+    if whitelist is None:
+        whitelist = build_whitelist(brands)
+
+    subdomain_hit = match_subdomain_impersonation(hostname, brands, whitelist)
     if subdomain_hit is not None:
         return subdomain_hit
 
     candidate = registrable_domain(hostname)
-    return match_registrable_domain(candidate, brands, variant_index)
+    return match_registrable_domain(candidate, brands, variant_index, whitelist)

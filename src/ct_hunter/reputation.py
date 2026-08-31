@@ -22,6 +22,9 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
+import time
+from collections import deque
 
 import requests
 from dotenv import load_dotenv
@@ -37,11 +40,48 @@ VIRUSTOTAL_MALICIOUS_THRESHOLD = 3
 VIRUSTOTAL_API_KEY = os.environ.get("VIRUSTOTAL_API_KEY")
 ABUSEIPDB_API_KEY = os.environ.get("ABUSEIPDB_API_KEY")
 
+# One shared session for connection pooling/keep-alive across every call
+# in this module, instead of a fresh TCP/TLS handshake per request.
+# requests.Session is documented as thread-safe for concurrent requests
+# (used from enrich_reputation.py's thread pool).
+_session = requests.Session()
+
+
+class _RateLimiter:
+    """Sliding-window limiter shared across threads: blocks the calling
+    thread until a call is allowed under max_calls per period_seconds.
+    Used to keep concurrent lookups collectively under a free-tier API
+    quota, since bounding the thread pool's worker count alone bounds
+    concurrency, not requests-per-minute."""
+
+    def __init__(self, max_calls: int, period_seconds: float):
+        self._max_calls = max_calls
+        self._period = period_seconds
+        self._lock = threading.Lock()
+        self._calls: deque[float] = deque()
+
+    def acquire(self) -> None:
+        with self._lock:
+            while True:
+                now = time.monotonic()
+                while self._calls and now - self._calls[0] > self._period:
+                    self._calls.popleft()
+                if len(self._calls) < self._max_calls:
+                    self._calls.append(now)
+                    return
+                time.sleep(self._period - (now - self._calls[0]))
+
+
+# ip-api.com's free tier is ~45 req/min; stay comfortably under that even
+# with several worker threads calling lookup_asn concurrently.
+_ip_api_limiter = _RateLimiter(max_calls=40, period_seconds=60)
+
 
 def lookup_asn(ip: str) -> dict:
     """ASN/organization for an IP. Free, no API key (ip-api.com, ~45 req/min)."""
+    _ip_api_limiter.acquire()
     try:
-        response = requests.get(
+        response = _session.get(
             f"http://ip-api.com/json/{ip}",
             params={"fields": "status,as,asname,isp,org,query"},
             timeout=REQUEST_TIMEOUT_SECONDS,
@@ -64,7 +104,7 @@ def check_urlscan(domain: str) -> dict:
     `malicious_verdict` is only True when URLscan states it explicitly.
     """
     try:
-        response = requests.get(
+        response = _session.get(
             "https://urlscan.io/api/v1/search/",
             params={"q": f'page.domain:"{domain}"', "size": 5},
             timeout=REQUEST_TIMEOUT_SECONDS,
@@ -81,7 +121,7 @@ def check_urlscan(domain: str) -> dict:
     malicious_verdict = None
     for r in results[:1]:  # only the most recent scan, to avoid burning the /result/ quota
         try:
-            detail = requests.get(r["result"], timeout=REQUEST_TIMEOUT_SECONDS).json()
+            detail = _session.get(r["result"], timeout=REQUEST_TIMEOUT_SECONDS).json()
             malicious_verdict = detail.get("verdicts", {}).get("overall", {}).get("malicious")
         except (requests.RequestException, ValueError, KeyError):
             pass
@@ -99,7 +139,7 @@ def check_virustotal(domain: str) -> dict:
     if not VIRUSTOTAL_API_KEY:
         return {"configured": False}
     try:
-        response = requests.get(
+        response = _session.get(
             f"https://www.virustotal.com/api/v3/domains/{domain}",
             headers={"x-apikey": VIRUSTOTAL_API_KEY},
             timeout=REQUEST_TIMEOUT_SECONDS,
@@ -129,7 +169,7 @@ def check_abuseipdb(ip: str) -> dict:
     if not ABUSEIPDB_API_KEY:
         return {"configured": False}
     try:
-        response = requests.get(
+        response = _session.get(
             "https://api.abuseipdb.com/api/v2/check",
             params={"ipAddress": ip, "maxAgeInDays": 90},
             headers={"Key": ABUSEIPDB_API_KEY, "Accept": "application/json"},

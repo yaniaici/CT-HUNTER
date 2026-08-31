@@ -53,20 +53,37 @@ def _dismiss_cookie_banner(page) -> None:
             continue
 
 
-def capture_screenshot(url: str, out_path: Path) -> bool:
+def capture_screenshot(url: str, out_path: Path, page=None) -> bool:
+    """Screenshots url to out_path.
+
+    If page is not given, launches a dedicated single-use browser (the
+    original standalone behavior). compare_visual() instead passes down
+    one shared page across all of its captures (reference, candidate
+    https, candidate http fallback), since each fresh Chromium launch
+    costs ~1-3s of pure startup overhead and a single comparison used to
+    pay that 2-3 times."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    if page is not None:
+        return _capture_with_page(page, url, out_path)
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch()
             try:
                 page = browser.new_page(viewport=VIEWPORT)
-                page.goto(url, timeout=NAV_TIMEOUT_MS, wait_until="domcontentloaded")
-                page.wait_for_timeout(1000)
-                _dismiss_cookie_banner(page)
-                page.wait_for_timeout(500)
-                page.screenshot(path=str(out_path))
+                return _capture_with_page(page, url, out_path)
             finally:
                 browser.close()
+    except Exception:
+        return False
+
+
+def _capture_with_page(page, url: str, out_path: Path) -> bool:
+    try:
+        page.goto(url, timeout=NAV_TIMEOUT_MS, wait_until="domcontentloaded")
+        page.wait_for_timeout(1000)
+        _dismiss_cookie_banner(page)
+        page.wait_for_timeout(500)
+        page.screenshot(path=str(out_path))
         return True
     except Exception:
         return False
@@ -88,24 +105,34 @@ def candidate_screenshot_path(domain: str) -> Path:
     return CANDIDATE_DIR / f"{_slug(domain)}.png"
 
 
-def ensure_reference_screenshot(brand: Brand) -> Path | None:
+def ensure_reference_screenshot(brand: Brand, page=None) -> Path | None:
     """Captures and caches the brand's reference screenshot the first time;
     later calls reuse the file already saved."""
     path = reference_screenshot_path(brand)
     if path.exists():
         return path
-    return path if capture_screenshot(f"https://{brand.domain}", path) else None
+    return path if capture_screenshot(f"https://{brand.domain}", path, page=page) else None
 
 
 def compare_visual(domain: str, brand: Brand) -> dict:
-    ref_path = ensure_reference_screenshot(brand)
-    if ref_path is None:
-        return {"error": f"Could not capture the reference screenshot for {brand.name} ({brand.domain})."}
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            page = browser.new_page(viewport=VIEWPORT)
 
-    cand_path = candidate_screenshot_path(domain)
-    ok = capture_screenshot(f"https://{domain}", cand_path) or capture_screenshot(f"http://{domain}", cand_path)
-    if not ok:
-        return {"error": f"Could not capture {domain} (timeout, connection refused, or no HTTP response)."}
+            ref_path = ensure_reference_screenshot(brand, page=page)
+            if ref_path is None:
+                return {"error": f"Could not capture the reference screenshot for {brand.name} ({brand.domain})."}
+
+            cand_path = candidate_screenshot_path(domain)
+            ok = (
+                capture_screenshot(f"https://{domain}", cand_path, page=page)
+                or capture_screenshot(f"http://{domain}", cand_path, page=page)
+            )
+            if not ok:
+                return {"error": f"Could not capture {domain} (timeout, connection refused, or no HTTP response)."}
+        finally:
+            browser.close()
 
     distance = _phash(ref_path) - _phash(cand_path)
     return {

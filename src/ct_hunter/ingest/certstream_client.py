@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
+import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -17,6 +17,8 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
 DEFAULT_URL = "ws://localhost:8080/"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,12 +70,12 @@ async def stream_certificates(url: str = DEFAULT_URL) -> AsyncIterator[CertEvent
                         message = json.loads(raw)
                         event = CertEvent.from_message(message)
                     except (json.JSONDecodeError, KeyError, TypeError) as exc:
-                        print(f"Skipping malformed firehose message: {exc!r}", file=sys.stderr)
+                        logger.warning(f"Skipping malformed firehose message: {exc!r}")
                         continue
                     if event is not None:
                         yield event
         except (ConnectionClosed, OSError) as exc:
-            print(f"Firehose connection lost or unavailable ({exc!r}), retrying in 2s...", file=sys.stderr)
+            logger.warning(f"Firehose connection lost or unavailable ({exc!r}), retrying in 2s...")
             await asyncio.sleep(2)
             continue
 

@@ -55,6 +55,15 @@ CREATE TABLE IF NOT EXISTS detections (
 CREATE INDEX IF NOT EXISTS idx_detections_score ON detections(score);
 CREATE INDEX IF NOT EXISTS idx_detections_status ON detections(status);
 CREATE INDEX IF NOT EXISTS idx_detections_brand ON detections(brand);
+-- Matches the dashboard's actual filter shape (WHERE score >= ? AND
+-- status IN (...) ORDER BY ... last_seen_at DESC): the single-column
+-- indexes above can only be used for one side of that query, this one
+-- covers the combined filter.
+CREATE INDEX IF NOT EXISTS idx_detections_status_score ON detections(status, score);
+-- Used by _data_version()'s MAX(updated_at) cache-key signal.
+CREATE INDEX IF NOT EXISTS idx_detections_updated_at ON detections(updated_at);
+-- Used by the dashboard's main ORDER BY ... last_seen_at DESC sort.
+CREATE INDEX IF NOT EXISTS idx_detections_last_seen_at ON detections(last_seen_at);
 """
 
 
@@ -68,6 +77,21 @@ def get_connection(path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # hunt.py and the dashboard are two separate OS processes reading and
+    # writing the same file concurrently. The default rollback journal
+    # blocks readers while a write is in progress; WAL lets readers
+    # proceed against the last committed snapshot instead, which matches
+    # this access pattern (frequent small writes from hunt.py, frequent
+    # reads from the dashboard).
+    conn.execute("PRAGMA journal_mode = WAL")
+    # NORMAL is the standard safe pairing with WAL: still fsyncs at
+    # checkpoints, just not on every single commit. hunt.py commits once
+    # per hit inside the async firehose loop (record_detection), so FULL
+    # (the default) meant a fsync stall on every hit; the only tradeoff is
+    # losing the last few not-yet-checkpointed transactions on an OS
+    # crash/power loss, not on an application crash, which is acceptable
+    # here.
+    conn.execute("PRAGMA synchronous = NORMAL")
     return conn
 
 
