@@ -25,6 +25,8 @@ is exactly what is needed to defend it in an interview.
 
 from __future__ import annotations
 
+import time
+
 TECHNIQUE_WEIGHTS = {
     "subdomain-impersonation": 40,
     "keyword-combo": 35,
@@ -67,6 +69,15 @@ VIRUSTOTAL_BONUS_PER_ENGINE = 5
 VIRUSTOTAL_MAX_BONUS = 25
 ABUSEIPDB_THRESHOLD = 50
 ABUSEIPDB_HIGH_SCORE_BONUS = 15
+
+# A domain registered right before it starts impersonating a brand is one
+# of the strongest phishing signals that exists, typosquatters register
+# just ahead of a campaign, not years in advance. 30 days is a common
+# threshold in industry threat intel for "freshly registered". The bonus
+# is comparable to RESOLVES_IP_BONUS: a real, corroborating signal, not
+# as conclusive as a visual match.
+FRESH_DOMAIN_AGE_DAYS = 30
+FRESH_DOMAIN_BONUS = 20
 
 MAX_SCORE = 100
 
@@ -112,3 +123,14 @@ def reputation_bonus(
     if abuseipdb_score is not None and abuseipdb_score >= ABUSEIPDB_THRESHOLD:
         bonus += ABUSEIPDB_HIGH_SCORE_BONUS
     return bonus
+
+
+def domain_age_bonus(domain_created_at: float | None) -> int:
+    """Bonus for a domain registered within FRESH_DOMAIN_AGE_DAYS, from
+    its WHOIS creation date (unix timestamp). 0 if the date is unknown or
+    unparseable, same "add to the existing score" pattern as
+    reputation_bonus, since WHOIS is fetched independently on demand."""
+    if domain_created_at is None:
+        return 0
+    age_days = (time.time() - domain_created_at) / 86400
+    return FRESH_DOMAIN_BONUS if 0 <= age_days <= FRESH_DOMAIN_AGE_DAYS else 0

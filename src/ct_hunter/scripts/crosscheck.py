@@ -24,7 +24,7 @@ from __future__ import annotations
 import sys
 import time
 
-from ct_hunter.detect.similarity import registrable_domain
+from ct_hunter.detect.similarity import DYNAMIC_DNS_SUFFIXES, registrable_domain
 from ct_hunter.enrich.reputation import VIRUSTOTAL_API_KEY, check_urlscan, check_virustotal
 from ct_hunter.enrich.threat_intel import fetch_openphish_domains
 from ct_hunter.storage.db import get_connection, init_db, update_status
@@ -48,6 +48,12 @@ def main() -> None:
     ).fetchall()
     for row in rows:
         reg = row["registrable_domain"] or registrable_domain(row["domain"])
+        if reg in DYNAMIC_DNS_SUFFIXES:
+            # A shared wildcard-DNS provider (see DYNAMIC_DNS_SUFFIXES):
+            # the eTLD+1 is not attacker-owned, so a feed hit against it
+            # says nothing about this specific subdomain, unlike a normal
+            # attacker-registered domain where the whole eTLD+1 is theirs.
+            continue
         if reg in feed_domains:
             confirmed += 1
             update_status(
@@ -71,8 +77,12 @@ def main() -> None:
 
     for row in candidates:
         reg = row["registrable_domain"] or registrable_domain(row["domain"])
+        # On a shared wildcard-DNS provider, the eTLD+1 itself is safe by
+        # definition (thousands of unrelated hosts), so URLscan/VirusTotal
+        # need to be asked about the actual full hostname instead.
+        lookup_target = row["domain"] if reg in DYNAMIC_DNS_SUFFIXES else reg
 
-        urlscan_result = check_urlscan(reg)
+        urlscan_result = check_urlscan(lookup_target)
         if urlscan_result.get("malicious_verdict") is True:
             confirmed += 1
             update_status(
@@ -83,7 +93,7 @@ def main() -> None:
             continue  # already confirmed, no need to spend VirusTotal quota too
 
         if VIRUSTOTAL_API_KEY:
-            vt_result = check_virustotal(reg)
+            vt_result = check_virustotal(lookup_target)
             if vt_result.get("malicious"):
                 confirmed += 1
                 update_status(

@@ -127,6 +127,7 @@ uv run ct-hunter-reputation   # ASN + own infrastructure reuse + AbuseIPDB
 uv run ct-hunter-crosscheck   # OpenPhish + URLscan (+ VirusTotal if an API key is set)
 uv run ct-hunter-whois        # registrar + nameservers, feeds the infrastructure graph
 uv run ct-hunter-triage       # moves 'New' to 'Monitoring' for exact-match techniques (backlog only, new detections get this automatically)
+uv run ct-hunter-reevaluate   # re-checks the backlog against current detection logic, discards rows that no longer match
 ```
 
 `ct-hunter-crosscheck` and `ct-hunter-reputation` use free external
@@ -175,7 +176,7 @@ v1: ingestion, detection, storage, scoring, visual comparison, and
 external reputation (own ASN correlation, URLscan, optional
 VirusTotal/AbuseIPDB) all working end to end.
 
-v2 (current): infrastructure correlation graph (IP/ASN/registrar/nameserver,
+v2: infrastructure correlation graph (IP/ASN/registrar/nameserver,
 not just a flat ASN match), a reliability audit that found and fixed four
 real production bugs (no process supervision across reboots/crashes, no
 error handling in the ingestion path, a dashboard crash on stale filter
@@ -189,6 +190,25 @@ Detections tab, an Overview tab (KPIs, charts, a read-only Alerts
 section for anything Critical severity that has not reached a verdict
 yet), and a reorganization of `src/ct_hunter` into subpackages grouped
 by role (ingest, detect, enrich, storage, process, scripts) instead of
-18 flat files. Shipped and running live.
+18 flat files.
 
-Next (v3): more CT sources watched in parallel, not just the one firehose.
+v3 (current): a detection-engine audit, then fixes verified against real
+production data rather than reasoning about them abstractly. Regional
+subsidiary domains (Santander MX/BR/UY, BBVA CO/MX, DHL AU/TR, and
+amazon.dev, an internal AWS domain the tld-swap fix below started
+flagging within minutes of shipping) were false-positiving as
+subdomain-impersonation, fixed in `config/brands.yaml` and backed out of
+the database. WHOIS creation date, already fetched and shown to the
+human, now also feeds a scoring bonus for freshly-registered domains
+instead of being discarded. `PHISHING_KEYWORDS` gained Spanish
+equivalents, 3 of the 10 target brands are Spanish-market and the list
+was 100% English. A `tld-swap` gap closed: an exact brand label under an
+unenumerated TLD (`microsoft.support`) used to slip past both the
+precomputed index and the fuzzy fallback; it is now a suffix-agnostic
+O(1) label check instead of a fixed TLD list. `ct-hunter-reevaluate` is
+new: detection-logic fixes used to only apply going forward, this
+re-checks the whole backlog against current logic and discards rows
+that no longer match (skips `confirmado_malicioso` rows, those need a
+human), first run cleared 47 fossilized false positives in 0.11s.
+
+Next: more CT sources watched in parallel, not just the one firehose.
