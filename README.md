@@ -170,6 +170,11 @@ Python 3.12, SQLite (no ORM, explicit SQL), Streamlit, dnspython,
 rapidfuzz, tldextract, networkx + pyvis, Playwright + imagehash,
 systemd user services. Dependency management via `uv`.
 
+Unit tests cover the detection engine and scoring (`uv run pytest`),
+including regression cases for the false positives/negatives found
+against live traffic (the DHL short-domain matches, the Apple China
+domain, the Microsoft CASB subdomain pattern).
+
 ## Roadmap
 
 Shipped and running live, grouped by area rather than by release:
@@ -194,6 +199,9 @@ Shipped and running live, grouped by area rather than by release:
       no process supervision across reboots/crashes, no error handling
       in the ingestion path, a dashboard crash on stale filter state,
       an on-demand task timeout crashing the whole session
+- [x] Unit test suite for the detection engine and scoring, pinning down
+      the real false positives/negatives found against live traffic so
+      a future refactor can't reintroduce them silently
 
 **Performance**
 - [x] Cached dashboard status calls, vectorized table styling
