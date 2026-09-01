@@ -1,7 +1,7 @@
 import pytest
 
 from ct_hunter.brands import Brand, load_brands
-from ct_hunter.detect.similarity import build_variant_index, build_whitelist
+from ct_hunter.detect.similarity import build_tld_swap_labels, build_variant_index, build_whitelist
 
 
 @pytest.fixture(scope="session")
@@ -23,3 +23,8 @@ def variant_index(brands: list[Brand]) -> dict[str, tuple[str, str]]:
 @pytest.fixture(scope="session")
 def whitelist(brands: list[Brand]) -> set[str]:
     return build_whitelist(brands)
+
+
+@pytest.fixture(scope="session")
+def tld_swap_labels(brands: list[Brand]) -> dict[str, str]:
+    return build_tld_swap_labels(brands)
