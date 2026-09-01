@@ -8,6 +8,7 @@ reintroduce them silently.
 """
 
 from ct_hunter.detect.similarity import (
+    build_tld_swap_labels,
     build_whitelist,
     evaluate_hostname,
     generate_variants,
@@ -39,10 +40,13 @@ class TestGenerateVariants:
         # dropping the 'h' from dhl -> dl
         assert variants.get("dl.com") == "omission"
 
-    def test_includes_cheap_tld_swap_alongside_original(self, brand_by_name):
+    def test_does_not_seed_plain_tld_swap_itself(self, brand_by_name):
+        # tld-swap (same label, different suffix) is handled separately by
+        # build_tld_swap_labels()/match_registrable_domain(), suffix-agnostic,
+        # so it must not also be seeded here restricted to COMMON_TLDS.
         variants = generate_variants(brand_by_name["Netflix"])
-        assert variants.get("netflix.xyz") == "tld-swap"
-        assert variants.get("netflix.top") == "tld-swap"
+        assert "netflix.xyz" not in variants
+        assert "netflix.top" not in variants
 
     def test_keyword_combo_variant(self, brand_by_name):
         variants = generate_variants(brand_by_name["PayPal"])
@@ -91,6 +95,39 @@ class TestMatchRegistrableDomain:
 
     def test_unrelated_domain_is_not_flagged(self, brands, variant_index, whitelist):
         assert match_registrable_domain("example.com", brands, variant_index, whitelist) is None
+
+
+class TestTldSwapSuffixAgnostic:
+    """Same label, any suffix, not just the fixed COMMON_TLDS list.
+
+    Regression coverage for a real gap: 'microsoft.support' or
+    'paypal.security', exact label with an unenumerated TLD, used to slip
+    past both the precomputed index and the Levenshtein fallback (which
+    also penalizes for the suffix difference, so it never scores high
+    enough)."""
+
+    def test_flags_exact_label_on_an_uncommon_suffix(self, brands, variant_index, whitelist, tld_swap_labels):
+        match = match_registrable_domain("microsoft.support", brands, variant_index, whitelist, tld_swap_labels)
+        assert match is not None
+        assert match.brand == "Microsoft"
+        assert match.technique == "tld-swap"
+
+    def test_flags_a_second_brand_on_an_uncommon_suffix(self, brands, variant_index, whitelist, tld_swap_labels):
+        match = match_registrable_domain("paypal.security", brands, variant_index, whitelist, tld_swap_labels)
+        assert match is not None
+        assert match.brand == "PayPal"
+        assert match.technique == "tld-swap"
+
+    def test_is_opt_in_via_the_tld_swap_labels_argument(self, brands, variant_index, whitelist):
+        # Omitting tld_swap_labels (the default) must not silently enable
+        # this check; callers that don't pass it get the old behavior.
+        assert match_registrable_domain("microsoft.support", brands, variant_index, whitelist) is None
+
+    def test_whitelisted_domain_wins_over_a_label_match(self, brands, variant_index, whitelist, tld_swap_labels):
+        # amazon.dev is a real, whitelisted Amazon domain (AWS internal
+        # service naming); it must not be flagged just because its label
+        # ('amazon') matches the brand's own label.
+        assert match_registrable_domain("amazon.dev", brands, variant_index, whitelist, tld_swap_labels) is None
 
 
 class TestMatchSubdomainImpersonation:
@@ -142,3 +179,11 @@ class TestEvaluateHostname:
         # Exercises the "Test a domain" dashboard tab's call path, which
         # does not precompute a whitelist.
         assert evaluate_hostname("microsoft.com", brands, variant_index, whitelist=None) is None
+
+    def test_builds_its_own_tld_swap_labels_when_none_given(self, brands, variant_index):
+        # Same dashboard call path, but for the suffix-agnostic tld-swap
+        # check: it must not require a precomputed tld_swap_labels either.
+        match = evaluate_hostname("microsoft.support", brands, variant_index, tld_swap_labels=None)
+        assert match is not None
+        assert match.brand == "Microsoft"
+        assert match.technique == "tld-swap"
