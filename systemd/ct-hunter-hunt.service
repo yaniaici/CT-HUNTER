@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/yani/Proyectos/CTI
+WorkingDirectory=%h/Proyectos/CTI
 ExecStart=/usr/bin/uv run ct-hunter-hunt
 Restart=on-failure
 RestartSec=5

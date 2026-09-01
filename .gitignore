@@ -9,15 +9,20 @@ __pycache__/
 # uv
 .python-version.local
 
-# Project data (local sqlite db, not versioned)
+# Project data (local sqlite db, not versioned). Includes the WAL-mode
+# sidecar files (-wal/-shm), which contain raw, uncheckpointed page data
+# from the live database, absolute local paths, real detected domains,
+# and everything else a plain .db file would have, missing these was a
+# real leak once WAL mode was turned on, see the conversation.
 data/*.db
 data/*.db-journal
+data/*.db-wal
+data/*.db-shm
 data/*.sqlite3
 
 # Runtime artifacts del proceso ct-hunter-hunt lanzado desde la UI
 data/hunt.pid
-data/hunt_status.json
-data/hunt_status.*.tmp
+data/hunt_status*
 data/hunt.log
 data/streamlit.log
 

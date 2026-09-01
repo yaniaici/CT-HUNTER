@@ -88,6 +88,8 @@ uv sync
 uv run playwright install chromium   # for visual comparison (screenshot + phash)
 
 # 3. Install the systemd user services (auto-restart on crash, start on boot)
+# The unit files assume the repo lives at ~/Proyectos/CTI (WorkingDirectory=%h/Proyectos/CTI);
+# edit that line in both files first if you cloned it somewhere else.
 mkdir -p ~/.config/systemd/user
 cp systemd/ct-hunter-hunt.service systemd/ct-hunter-dashboard.service ~/.config/systemd/user/
 loginctl enable-linger "$USER"   # start at boot even without logging in
