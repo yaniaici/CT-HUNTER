@@ -42,7 +42,7 @@ from ct_hunter.storage.db import (
 
 st.set_page_config(page_title="CT Hunter", page_icon="🎣", layout="wide")
 
-# An unresponsive (not NXDOMAIN) nameserver can cost up to ~9s per domain
+# An unresponsive (not NXDOMAIN) nameserver can cost up to ~9s per domains
 # (enrich/dns.py tries A, then AAAA, then MX, 3s timeout each). enrich_pending.py
 # now resolves up to MAX_WORKERS domains concurrently, so the worst case for
 # a batch of N domains is roughly ceil(N / MAX_WORKERS) * 9s, not N * 9s;
