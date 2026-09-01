@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 from datetime import datetime
 
 import pandas as pd
@@ -84,6 +85,11 @@ SEVERITY_BANDS = (
     (40, "Medium", "yellow", "#eab308"),
     (0, "Low", "blue", "#3b82f6"),
 )
+
+# What counts as an "alert" on the Overview tab: Critical severity by
+# the existing band, reusing it instead of a second definition of "high
+# score" that could quietly drift from the badges everywhere else.
+ALERT_SCORE_THRESHOLD = SEVERITY_BANDS[0][0]
 
 
 def severity_for_score(score: float | None) -> tuple[str, str, str]:
@@ -210,10 +216,10 @@ def _data_version(conn) -> tuple:
     return (row["n"], row["latest"])
 
 
-def _load(conn) -> pd.DataFrame:
-    rows = conn.execute(
-        "SELECT * FROM detections ORDER BY score IS NULL, score DESC, last_seen_at DESC"
-    ).fetchall()
+DETECTIONS_PAGE_SIZE = 50
+
+
+def _rows_to_df(rows: list) -> pd.DataFrame:
     df = pd.DataFrame([dict(r) for r in rows])
     for col in ("first_seen_at", "last_seen_at", "updated_at"):
         if col in df.columns:
@@ -221,9 +227,143 @@ def _load(conn) -> pd.DataFrame:
     return df
 
 
+def _filter_clause(brand_filter: list[str], status_filter: list[str], min_score: int) -> tuple[str, list]:
+    """WHERE clause + params for the Detections tab's sidebar filters,
+    shared by the count query and the page query so they can never
+    disagree. NULL scores count as 0 for the threshold, matching how a
+    detection with no score yet used to read under the old
+    df["score"].fillna(0) >= min_score in-memory filter."""
+    if not brand_filter or not status_filter:
+        return "0 = 1", []  # an empty multiselect means "match nothing", not "match everything"
+    brand_placeholders = ",".join("?" * len(brand_filter))
+    status_placeholders = ",".join("?" * len(status_filter))
+    clause = (
+        f"brand IN ({brand_placeholders}) AND status IN ({status_placeholders}) "
+        "AND COALESCE(score, 0) >= ?"
+    )
+    return clause, [*brand_filter, *status_filter, min_score]
+
+
 @st.cache_data
-def _load_cached(_conn, version: tuple) -> pd.DataFrame:
-    return _load(_conn)
+def _distinct_brands_cached(_conn, version: tuple) -> list[str]:
+    rows = _conn.execute("SELECT DISTINCT brand FROM detections ORDER BY brand").fetchall()
+    return [r["brand"] for r in rows]
+
+
+@st.cache_data
+def _summary_counts_cached(_conn, version: tuple) -> dict:
+    """Unfiltered KPI totals via cheap indexed aggregate queries instead
+    of loading the whole table just to call len()/sum() on it, this is
+    the main point of pagination: the dashboard should not need every
+    row in memory just to show a count."""
+    total = _conn.execute("SELECT COUNT(*) AS n FROM detections").fetchone()["n"]
+    confirmed = _conn.execute(
+        "SELECT COUNT(*) AS n FROM detections WHERE status = 'confirmado_malicioso'"
+    ).fetchone()["n"]
+    critical = _conn.execute(
+        "SELECT COUNT(*) AS n FROM detections WHERE COALESCE(score, 0) >= ?", (ALERT_SCORE_THRESHOLD,)
+    ).fetchone()["n"]
+    return {"total": total, "confirmed": confirmed, "critical": critical}
+
+
+@st.cache_data
+def _overview_kpis_cached(_conn, version: tuple) -> dict:
+    """KPI row for the Overview tab. 'new_24h' and 'alerts' are the two
+    numbers that don't already exist in _summary_counts_cached."""
+    day_ago = time.time() - 86400
+    new_24h = _conn.execute(
+        "SELECT COUNT(*) AS n FROM detections WHERE first_seen_at >= ?", (day_ago,)
+    ).fetchone()["n"]
+    alerts = _conn.execute(
+        "SELECT COUNT(*) AS n FROM detections WHERE COALESCE(score, 0) >= ? "
+        "AND status NOT IN ('confirmado_malicioso', 'descartado')",
+        (ALERT_SCORE_THRESHOLD,),
+    ).fetchone()["n"]
+    return {"new_24h": new_24h, "alerts": alerts}
+
+
+@st.cache_data
+def _alerts_cached(_conn, version: tuple, min_score: float, limit: int = 200) -> pd.DataFrame:
+    """Critical-severity domains that have not reached a terminal
+    status yet, the ones an analyst actually needs to look at. Capped
+    so a genuine flood can't blow up the render, this is meant to stay
+    a short, actionable list, not a second copy of the full table."""
+    cursor = _conn.execute(
+        "SELECT * FROM detections WHERE COALESCE(score, 0) >= ? "
+        "AND status NOT IN ('confirmado_malicioso', 'descartado') "
+        "ORDER BY score DESC, first_seen_at DESC LIMIT ?",
+        (min_score, limit),
+    )
+    rows = cursor.fetchall()
+    if not rows:
+        return pd.DataFrame(columns=[d[0] for d in cursor.description])
+    return _rows_to_df(rows)
+
+
+@st.cache_data
+def _daily_counts_cached(_conn, version: tuple, days: int = 30) -> pd.DataFrame:
+    """Detections per day for the last `days` days, by first_seen_at
+    (when the certificate was actually issued, not when it was
+    enriched/scored later)."""
+    cutoff = time.time() - days * 86400
+    rows = _conn.execute(
+        "SELECT date(first_seen_at, 'unixepoch') AS day, COUNT(*) AS count "
+        "FROM detections WHERE first_seen_at >= ? GROUP BY day ORDER BY day",
+        (cutoff,),
+    ).fetchall()
+    return pd.DataFrame([dict(r) for r in rows])
+
+
+@st.cache_data
+def _brand_breakdown_cached(_conn, version: tuple) -> pd.DataFrame:
+    rows = _conn.execute(
+        "SELECT brand, COUNT(*) AS count FROM detections GROUP BY brand ORDER BY count DESC"
+    ).fetchall()
+    return pd.DataFrame([dict(r) for r in rows])
+
+
+@st.cache_data
+def _technique_breakdown_cached(_conn, version: tuple) -> pd.DataFrame:
+    rows = _conn.execute(
+        "SELECT technique, COUNT(*) AS count FROM detections GROUP BY technique ORDER BY count DESC"
+    ).fetchall()
+    return pd.DataFrame([dict(r) for r in rows])
+
+
+@st.cache_data
+def _status_breakdown_cached(_conn, version: tuple) -> pd.DataFrame:
+    rows = _conn.execute(
+        "SELECT status, COUNT(*) AS count FROM detections GROUP BY status"
+    ).fetchall()
+    df = pd.DataFrame([dict(r) for r in rows])
+    if not df.empty:
+        df["status"] = df["status"].map(lambda s: STATUS_LABELS.get(s, s))
+    return df
+
+
+@st.cache_data
+def _filtered_count_cached(_conn, version: tuple, where_clause: str, params: tuple) -> int:
+    row = _conn.execute(f"SELECT COUNT(*) AS n FROM detections WHERE {where_clause}", params).fetchone()
+    return row["n"]
+
+
+@st.cache_data
+def _page_cached(_conn, version: tuple, where_clause: str, params: tuple, limit: int, offset: int) -> pd.DataFrame:
+    cursor = _conn.execute(
+        f"SELECT * FROM detections WHERE {where_clause} "
+        "ORDER BY score IS NULL, score DESC, last_seen_at DESC "
+        "LIMIT ? OFFSET ?",
+        (*params, limit, offset),
+    )
+    rows = cursor.fetchall()
+    if not rows:
+        # pd.DataFrame([]) has no columns at all, which breaks
+        # page_df[LIST_COLUMNS] downstream (e.g. every brand/status
+        # deselected in the sidebar, matching nothing). cursor.description
+        # is populated from the query's column list even with zero rows,
+        # so this keeps the empty page schema-correct.
+        return pd.DataFrame(columns=[d[0] for d in cursor.description])
+    return _rows_to_df(rows)
 
 
 @st.cache_data
@@ -283,8 +423,8 @@ with _header_right:
 
 st.divider()
 
-tab_detections, tab_graph, tab_test, tab_system = st.tabs(
-    ["📋 Detections", "🕸️ Infrastructure graph", "🔍 Test a domain", "⚙️ System"]
+tab_overview, tab_detections, tab_graph, tab_test, tab_system = st.tabs(
+    ["📊 Overview", "📋 Detections", "🕸️ Infrastructure graph", "🔍 Test a domain", "⚙️ System"]
 )
 
 conn = _connection()
@@ -293,10 +433,81 @@ conn = _connection()
 # (a cached resource) and the same underlying data within one script run.
 data_version = _data_version(conn)
 
-with tab_detections:
-    df = _load_cached(conn, data_version)
+with tab_overview:
+    summary = _summary_counts_cached(conn, data_version)
+    overview_kpis = _overview_kpis_cached(conn, data_version)
 
-    if df.empty:
+    if summary["total"] == 0:
+        st.info(
+            "No detections yet. Go to the **System** tab to start "
+            "`ct-hunter-hunt` and start watching the firehose."
+        )
+    else:
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
+            with st.container(border=True):
+                st.metric("Total tracked", summary["total"])
+        with k2:
+            with st.container(border=True):
+                st.metric("New (last 24h)", overview_kpis["new_24h"])
+        with k3:
+            with st.container(border=True):
+                st.metric("Confirmed malicious", summary["confirmed"])
+        with k4:
+            with st.container(border=True):
+                st.metric("🚨 Alerts", overview_kpis["alerts"])
+
+        st.subheader("🚨 Alerts: needs attention")
+        st.caption(
+            f"Score {ALERT_SCORE_THRESHOLD}+ (Critical) and not yet confirmed or discarded. "
+            "Read-only here, go to the Detections tab to investigate and set a verdict."
+        )
+        alerts_df = _alerts_cached(conn, data_version, ALERT_SCORE_THRESHOLD)
+        if alerts_df.empty:
+            st.info("No alerts right now.")
+        else:
+            st.dataframe(
+                style_detections_table(alerts_df[LIST_COLUMNS]),
+                hide_index=True,
+                width="stretch",
+                height=min(360, 40 + 35 * len(alerts_df)),
+            )
+
+        st.divider()
+        st.subheader("📈 Detections over time")
+        daily = _daily_counts_cached(conn, data_version)
+        if daily.empty:
+            st.caption("Not enough data yet.")
+        else:
+            st.area_chart(daily, x="day", y="count", height=260)
+
+        chart_col1, chart_col2 = st.columns(2)
+        with chart_col1:
+            st.subheader("🎯 Top targeted brands")
+            brand_breakdown = _brand_breakdown_cached(conn, data_version)
+            if brand_breakdown.empty:
+                st.caption("No data yet.")
+            else:
+                st.bar_chart(brand_breakdown, x="brand", y="count", height=280)
+        with chart_col2:
+            st.subheader("🧬 Techniques")
+            technique_breakdown = _technique_breakdown_cached(conn, data_version)
+            if technique_breakdown.empty:
+                st.caption("No data yet.")
+            else:
+                st.bar_chart(technique_breakdown, x="technique", y="count", height=280)
+
+        st.subheader("📊 Status breakdown")
+        status_breakdown = _status_breakdown_cached(conn, data_version)
+        if status_breakdown.empty:
+            st.caption("No data yet.")
+        else:
+            st.bar_chart(status_breakdown, x="status", y="count", height=240)
+
+with tab_detections:
+    summary = _summary_counts_cached(conn, data_version)
+
+    if summary["total"] == 0:
         st.info(
             "No detections yet. Go to the **System** tab to start "
             "`ct-hunter-hunt` and start watching the firehose."
@@ -304,7 +515,7 @@ with tab_detections:
     else:
         with st.sidebar:
             st.header("🎛️ Filters")
-            brands_present = sorted(df["brand"].unique())
+            brands_present = _distinct_brands_cached(conn, data_version)
             brand_filter = st.multiselect("Brand", brands_present, default=brands_present)
             default_statuses = [s for s in VALID_STATUSES if s != "descartado"]
             status_filter = st.multiselect(
@@ -314,26 +525,41 @@ with tab_detections:
             )
             min_score = st.slider("Minimum score", 0, 100, 0)
 
-        filtered = df[
-            df["brand"].isin(brand_filter)
-            & df["status"].isin(status_filter)
-            & (df["score"].fillna(0) >= min_score)
-        ].reset_index(drop=True)
+        where_clause, where_params = _filter_clause(brand_filter, status_filter, min_score)
+        filtered_count = _filtered_count_cached(conn, data_version, where_clause, tuple(where_params))
+
+        # A page number only makes sense relative to a specific filter
+        # selection; reset to page 1 whenever brand/status/score actually
+        # changed, otherwise the old page can point past the end of a
+        # newly-narrowed result set, same class of stale-index bug fixed
+        # for row selection (see docs/architecture.md section 13).
+        filter_sig = (tuple(sorted(brand_filter)), tuple(sorted(status_filter)), min_score)
+        if st.session_state.get("detections_filter_sig") != filter_sig:
+            st.session_state["detections_filter_sig"] = filter_sig
+            st.session_state["detections_page"] = 0
+
+        total_pages = max(1, -(-filtered_count // DETECTIONS_PAGE_SIZE))  # ceil division
+        current_page = min(st.session_state.get("detections_page", 0), total_pages - 1)
+        st.session_state["detections_page"] = current_page
+
+        page_df = _page_cached(
+            conn, data_version, where_clause, tuple(where_params),
+            DETECTIONS_PAGE_SIZE, current_page * DETECTIONS_PAGE_SIZE,
+        )
 
         k1, k2, k3, k4 = st.columns(4)
         with k1:
             with st.container(border=True):
-                st.metric("Matching filter", len(filtered))
+                st.metric("Matching filter", filtered_count)
         with k2:
             with st.container(border=True):
-                st.metric("Total tracked", len(df))
+                st.metric("Total tracked", summary["total"])
         with k3:
             with st.container(border=True):
-                st.metric("Confirmed malicious", int((df["status"] == "confirmado_malicioso").sum()))
+                st.metric("Confirmed malicious", summary["confirmed"])
         with k4:
             with st.container(border=True):
-                critical_count = int((df["score"].fillna(0) >= 80).sum())
-                st.metric("Critical severity", critical_count)
+                st.metric("Critical severity", summary["critical"])
 
         list_col, detail_col = st.columns([2, 3])
 
@@ -341,7 +567,7 @@ with tab_detections:
             st.subheader("📋 Detections")
             st.caption("Select a row to investigate it in the panel on the right. Color = severity.")
             selection = st.dataframe(
-                style_detections_table(filtered[LIST_COLUMNS]),
+                style_detections_table(page_df[LIST_COLUMNS]),
                 hide_index=True,
                 width="stretch",
                 height=560,
@@ -351,12 +577,24 @@ with tab_detections:
             )
             selected_rows = selection.selection.rows if selection and selection.selection else []
             # A selection index can go stale (point past the end of the
-            # now-shorter list) right after a sidebar filter narrows the
-            # table: Streamlit keeps the widget's old selection state
-            # across the rerun, it does not clear it when the underlying
-            # data shrinks. Without this bounds check that crashed the
-            # whole app with an IndexError (seen in production).
-            selected_rows = [i for i in selected_rows if i < len(filtered)]
+            # now-shorter page) right after a sidebar filter narrows the
+            # table or the page changes: Streamlit keeps the widget's old
+            # selection state across the rerun, it does not clear it when
+            # the underlying data shrinks. Without this bounds check that
+            # crashed the whole app with an IndexError (seen in production).
+            selected_rows = [i for i in selected_rows if i < len(page_df)]
+
+            pg_prev, pg_info, pg_next = st.columns([1, 2, 1])
+            with pg_prev:
+                if st.button("◀ Prev", disabled=current_page == 0):
+                    st.session_state["detections_page"] = current_page - 1
+                    st.rerun()
+            with pg_info:
+                st.caption(f"Page {current_page + 1} of {total_pages} ({filtered_count} matching)")
+            with pg_next:
+                if st.button("Next ▶", disabled=current_page >= total_pages - 1):
+                    st.session_state["detections_page"] = current_page + 1
+                    st.rerun()
 
         with detail_col:
             st.subheader("🔬 Detection context")
@@ -364,7 +602,7 @@ with tab_detections:
             if not selected_rows:
                 st.info("⬅️ Select a domain from the list to see its context and set a verdict.")
             else:
-                row = filtered.iloc[selected_rows[0]]
+                row = page_df.iloc[selected_rows[0]]
                 domain = row["domain"]
                 reg_domain = row["registrable_domain"] or domain
 

@@ -11,8 +11,14 @@ Restart=on-failure
 RestartSec=5
 # same reasoning as ct-hunter-hunt.service: SIGTERM via `uv run` exits 143
 SuccessExitStatus=143
-StandardOutput=append:/home/yani/Proyectos/CTI/data/streamlit.log
-StandardError=append:/home/yani/Proyectos/CTI/data/streamlit.log
+# data/streamlit.log used to grow without limit (StandardOutput/StandardError
+# appended to it directly). Unlike hunt.py, this process's stdout is not
+# just our own print()/logging calls, Streamlit itself writes its own
+# startup banner and warnings straight to stdout, outside our control, so
+# a RotatingFileHandler in our own code (the fix used for data/hunt.log)
+# would not catch all of it. Left at systemd's default (journal) instead,
+# which already rotates/caps size on its own: `journalctl --user -u
+# ct-hunter-dashboard.service`.
 
 [Install]
 WantedBy=default.target

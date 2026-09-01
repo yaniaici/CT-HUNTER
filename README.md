@@ -95,10 +95,16 @@ systemctl --user daemon-reload
 systemctl --user enable --now ct-hunter-hunt.service ct-hunter-dashboard.service
 ```
 
-The dashboard is now at http://localhost:8501. From its **System** tab
-you can start/stop `ct-hunter-hunt` with a button; that shells out to
-`systemctl --user`, it does not spawn a separate process (see
-`docs/architecture.md` section 13 for why that distinction matters).
+The dashboard is now at http://localhost:8501, opening on the
+**Overview** tab: KPIs, a few charts, and a read-only Alerts section for
+anything Critical severity that has not been confirmed or discarded
+yet. Investigating a specific domain and setting a verdict still
+happens in the **Detections** tab.
+
+From the **System** tab you can start/stop `ct-hunter-hunt` with a
+button; that shells out to `systemctl --user`, it does not spawn a
+separate process (see `docs/architecture.md` section 13 for why that
+distinction matters).
 
 Without the systemd services, both can still be run by hand for a quick
 test, they just will not survive a crash or a reboot:
@@ -158,17 +164,18 @@ v1: ingestion, detection, storage, scoring, visual comparison, and
 external reputation (own ASN correlation, URLscan, optional
 VirusTotal/AbuseIPDB) all working end to end.
 
-v2, in progress: infrastructure correlation graph (IP/ASN/registrar/
-nameserver, not just a flat ASN match) shipped. Also shipped: a
-reliability audit that found and fixed four real production bugs
-(no process supervision across reboots/crashes, no error handling in
-the ingestion path, a dashboard crash on stale filter state, an
-on-demand task timeout crashing the whole session), SQLite WAL mode,
-log rotation for `data/hunt.log`, and a performance pass (cached
-dashboard status calls, vectorized table styling, a composite index
-plus two more, `synchronous=NORMAL`, parallelized DNS/reputation
-enrichment, Playwright browser reuse for visual comparison, a
-precomputed brand whitelist on the ingestion hot path), see
-`docs/architecture.md` sections 13 through 17. Still pending: log
-rotation for the dashboard's own log, pagination at larger table sizes,
-automated alerts, more CT sources in parallel.
+v2: infrastructure correlation graph (IP/ASN/registrar/nameserver, not
+just a flat ASN match), a reliability audit that found and fixed four
+real production bugs (no process supervision across reboots/crashes, no
+error handling in the ingestion path, a dashboard crash on stale filter
+state, an on-demand task timeout crashing the whole session), SQLite
+WAL mode plus log rotation for both processes, a performance pass
+(cached dashboard status calls, vectorized table styling, three new
+indexes, `synchronous=NORMAL`, parallelized DNS/reputation enrichment,
+Playwright browser reuse for visual comparison, a precomputed brand
+whitelist on the ingestion hot path), SQL-side pagination for the
+Detections tab, and an Overview tab (KPIs, charts, a read-only Alerts
+section for anything Critical severity that has not reached a verdict
+yet). See `docs/architecture.md` sections 13 through 20.
+
+Next: more CT sources watched in parallel, not just the one firehose.

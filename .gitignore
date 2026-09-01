@@ -27,5 +27,8 @@ data/screenshots/
 # Env / secrets
 .env
 
+# Already tracked, this has no effect yet, see the conversation for why
+docs/architecture.md
+
 # OS
 .DS_Store
