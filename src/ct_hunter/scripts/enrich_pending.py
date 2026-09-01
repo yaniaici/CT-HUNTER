@@ -26,7 +26,7 @@ from __future__ import annotations
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from ct_hunter.enrich import resolve_domain
+from ct_hunter.enrich.dns import resolve_domain
 from ct_hunter.scoring import score_detection
 from ct_hunter.storage.db import get_connection, init_db, update_score
 

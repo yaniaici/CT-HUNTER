@@ -20,7 +20,7 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-LOG_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "hunt.log"
+LOG_PATH = Path(__file__).resolve().parent.parent.parent.parent / "data" / "hunt.log"
 MAX_BYTES = 5_000_000  # rotate at ~5MB
 BACKUP_COUNT = 3  # hunt.log plus 3 rotated copies, ~20MB total worst case
 

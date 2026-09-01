@@ -26,7 +26,7 @@ from playwright.sync_api import sync_playwright
 
 from ct_hunter.brands import Brand
 
-SCREENSHOTS_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "screenshots"
+SCREENSHOTS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data" / "screenshots"
 REFERENCE_DIR = SCREENSHOTS_DIR / "reference"
 CANDIDATE_DIR = SCREENSHOTS_DIR / "candidates"
 

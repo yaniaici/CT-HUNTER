@@ -11,7 +11,7 @@ import os
 import time
 from pathlib import Path
 
-DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+DATA_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data"
 PID_FILE = DATA_DIR / "hunt.pid"
 STATUS_FILE = DATA_DIR / "hunt_status.json"
 LOG_FILE = DATA_DIR / "hunt.log"

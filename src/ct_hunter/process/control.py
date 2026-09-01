@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import subprocess
 
-from ct_hunter.process_state import DATA_DIR, read_status
+from ct_hunter.process.state import DATA_DIR, read_status
 
 PROJECT_ROOT = DATA_DIR.parent
 

@@ -22,12 +22,13 @@ import streamlit as st
 
 from ct_hunter.brands import load_brands
 from ct_hunter.detect.similarity import build_variant_index, evaluate_hostname, registrable_domain
-from ct_hunter.enrich import get_first_ip, resolve_domain
+from ct_hunter.enrich.dns import get_first_ip, resolve_domain
+from ct_hunter.enrich.osint import external_links, http_probe, whois_lookup
+from ct_hunter.enrich.reputation import VIRUSTOTAL_API_KEY, asn_reuse, check_abuseipdb, check_urlscan, lookup_asn
+from ct_hunter.enrich.visual import VISUAL_SIMILARITY_THRESHOLD, compare_visual
 from ct_hunter.graph import build_graph, cluster_for_domain, connected_clusters, render_html, shared_attributes_for_domain
-from ct_hunter.osint import external_links, http_probe, whois_lookup
-from ct_hunter.process_control import PROJECT_ROOT, docker_status, hunt_status, start_hunt, stop_hunt
+from ct_hunter.process.control import PROJECT_ROOT, docker_status, hunt_status, start_hunt, stop_hunt
 from ct_hunter.report import write_report
-from ct_hunter.reputation import VIRUSTOTAL_API_KEY, asn_reuse, check_abuseipdb, check_urlscan, lookup_asn
 from ct_hunter.scoring import MAX_SCORE, reputation_bonus, score_detection
 from ct_hunter.storage.db import (
     VALID_STATUSES,
@@ -38,12 +39,11 @@ from ct_hunter.storage.db import (
     update_status,
     update_whois,
 )
-from ct_hunter.visual import VISUAL_SIMILARITY_THRESHOLD, compare_visual
 
 st.set_page_config(page_title="CT Hunter", page_icon="🎣", layout="wide")
 
 # An unresponsive (not NXDOMAIN) nameserver can cost up to ~9s per domain
-# (enrich.py tries A, then AAAA, then MX, 3s timeout each). enrich_pending.py
+# (enrich/dns.py tries A, then AAAA, then MX, 3s timeout each). enrich_pending.py
 # now resolves up to MAX_WORKERS domains concurrently, so the worst case for
 # a batch of N domains is roughly ceil(N / MAX_WORKERS) * 9s, not N * 9s;
 # this button used to time out in production against a sequential batch
@@ -1036,7 +1036,7 @@ with tab_system:
         if col_enrich.button("🧬 Enrich pending (DNS + score)"):
             with st.spinner("Resolving DNS and computing scores..."):
                 output = run_background_task(
-                    "ct_hunter.enrich_pending", str(ENRICH_BATCH_LIMIT),
+                    "ct_hunter.scripts.enrich_pending", str(ENRICH_BATCH_LIMIT),
                     timeout=ENRICH_TIMEOUT_SECONDS,
                 )
             st.code(output, language=None)
@@ -1044,7 +1044,7 @@ with tab_system:
 
         if col_reputation.button("🕵️ Reputation (ASN + AbuseIPDB) in bulk"):
             with st.spinner("Checking ASN/reputation for everything that resolves to an IP..."):
-                output = run_background_task("ct_hunter.enrich_reputation", timeout=300)
+                output = run_background_task("ct_hunter.scripts.enrich_reputation", timeout=300)
             st.code(output, language=None)
             st.cache_resource.clear()
 
@@ -1054,7 +1054,7 @@ with tab_system:
         )
         if st.button("🌐 Crosscheck OpenPhish + URLscan + VirusTotal (max 15)"):
             with st.spinner("Comparing against external sources (may take a few minutes)..."):
-                output = run_background_task("ct_hunter.crosscheck", "15", timeout=360)
+                output = run_background_task("ct_hunter.scripts.crosscheck", "15", timeout=360)
             st.code(output, language=None)
             st.cache_resource.clear()
 
@@ -1065,6 +1065,6 @@ with tab_system:
         )
         if st.button("🏷️ Auto-triage backlog to Monitoring"):
             with st.spinner("Triaging..."):
-                output = run_background_task("ct_hunter.auto_triage", timeout=60)
+                output = run_background_task("ct_hunter.scripts.auto_triage", timeout=60)
             st.code(output, language=None)
             st.cache_resource.clear()

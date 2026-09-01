@@ -23,8 +23,8 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from ct_hunter.enrich import get_first_ip
-from ct_hunter.reputation import asn_reuse, check_abuseipdb, lookup_asn
+from ct_hunter.enrich.dns import get_first_ip
+from ct_hunter.enrich.reputation import asn_reuse, check_abuseipdb, lookup_asn
 from ct_hunter.scoring import MAX_SCORE, reputation_bonus
 from ct_hunter.storage.db import get_connection, init_db, update_reputation
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 import sys
 import time
 
-from ct_hunter.osint import whois_lookup
+from ct_hunter.enrich.osint import whois_lookup
 from ct_hunter.storage.db import get_connection, init_db, update_whois
 
 MIN_SCORE_FOR_WHOIS = 50

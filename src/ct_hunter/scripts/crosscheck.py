@@ -25,9 +25,9 @@ import sys
 import time
 
 from ct_hunter.detect.similarity import registrable_domain
-from ct_hunter.reputation import VIRUSTOTAL_API_KEY, check_urlscan, check_virustotal
+from ct_hunter.enrich.reputation import VIRUSTOTAL_API_KEY, check_urlscan, check_virustotal
+from ct_hunter.enrich.threat_intel import fetch_openphish_domains
 from ct_hunter.storage.db import get_connection, init_db, update_status
-from ct_hunter.threat_intel import fetch_openphish_domains
 
 MIN_SCORE_FOR_EXPENSIVE_CHECKS = 50
 VIRUSTOTAL_SLEEP_SECONDS = 16  # free tier is roughly 4 req/min

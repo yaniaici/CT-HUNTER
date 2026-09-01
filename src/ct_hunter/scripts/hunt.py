@@ -15,8 +15,8 @@ import time
 from ct_hunter.brands import load_brands
 from ct_hunter.detect.similarity import build_variant_index, build_whitelist, evaluate_hostname
 from ct_hunter.ingest.certstream_client import stream_certificates
-from ct_hunter.logging_setup import configure_hunt_logging
-from ct_hunter.process_state import claim_single_instance, write_status
+from ct_hunter.process.logging_setup import configure_hunt_logging
+from ct_hunter.process.state import claim_single_instance, write_status
 from ct_hunter.storage.db import get_connection, init_db, record_detection
 
 STATUS_WRITE_INTERVAL = 20  # certificates between hunt_status.json writes
