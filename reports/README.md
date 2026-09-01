@@ -16,7 +16,7 @@ attack infrastructure before it gets used, not after.
    with WHOIS / HTTP check / external links.
 2. Set the verdict to `confirmado_malicioso` once there is real evidence
    (active phishing content, listed in a public feed like OpenPhish, etc.),
-   never automatic; see `docs/architecture.md`.
+   never automatic.
 3. "Generate report draft" button in the domain's own panel, or:
    ```
    uv run ct-hunter-report <domain>

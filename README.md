@@ -34,10 +34,6 @@ positives that only show up on real domains, a process that has to
 survive running for days unattended, a database two processes hit at
 once.
 
-`docs/architecture.md` is a running log of the decisions and the bugs,
-kept up to date as I went, mostly so I can still explain any of it
-later without having to re-derive the reasoning from the code.
-
 ```mermaid
 flowchart LR
     A[Certificate Transparency logs] -->|WebSocket firehose| B[ingest]
@@ -84,15 +80,14 @@ I also spent a fair amount of time on the parts that aren't the
 unattended: systemd instead of a background process that dies on
 reboot, WAL-mode SQLite because two processes hit the same file
 concurrently, a UI that shows a warning instead of crashing when a
-subprocess call times out. Documented in the architecture log along
-with why, since that's usually the part that gets skipped.
+subprocess call times out. That's usually the part that gets skipped.
 
 ![Detections tab: a selected domain's investigation panel, severity and status badges, first/last seen, DNS enrichment, WHOIS and reputation lookups](docs/screenshots/detections.png)
 
 ## Quickstart
 
 ```bash
-# 1. Start the CT log firehose (self-hosted, see docs/architecture.md)
+# 1. Start the CT log firehose (self-hosted)
 docker run -d --name certstream --restart unless-stopped -p 8080:8080 \
   -v certstream-state:/data -e CERTSTREAM_CT_LOG_STATE_FILE=/data/state.json \
   ghcr.io/reloading01/certstream-server-rust:latest
@@ -118,9 +113,8 @@ yet. Investigating a specific domain and setting a verdict still
 happens in the **Detections** tab.
 
 From the **System** tab you can start/stop `ct-hunter-hunt` with a
-button; that shells out to `systemctl --user`, it does not spawn a
-separate process (see `docs/architecture.md` section 13 for why that
-distinction matters).
+button; that shells out to `systemctl --user` rather than spawning a
+raw process, so it doesn't fight systemd's own crash-restart policy.
 
 Without the systemd services, both can still be run by hand for a quick
 test, they just will not survive a crash or a reboot:
@@ -150,13 +144,12 @@ configured in [`config/brands.yaml`](config/brands.yaml).
 From a domain's panel you can also request a **visual comparison**
 (screenshot from a real browser + perceptual hash against the brand's
 legitimate site) and generate a **report draft** for a confirmed case.
-See `docs/architecture.md` for the details and known limitations of each.
 
 The **Infrastructure graph** tab correlates domains that share an IP,
 ASN, registrar, or nameserver, an interactive network view plus a list of
 the resulting clusters. Known generic hosting/parking providers (Sedo,
-AWS, etc.) are excluded from correlation; see `docs/architecture.md`
-section 10 for why and how that was found.
+AWS, etc.) are excluded from correlation, otherwise every domain on
+shared hosting would look like it's connected to everything else.
 
 ![Infrastructure graph: domains connected through shared IP/ASN/registrar/nameserver, star-shaped clusters mean shared infrastructure, not coincidence](docs/screenshots/graph.png)
 
@@ -196,6 +189,6 @@ Detections tab, an Overview tab (KPIs, charts, a read-only Alerts
 section for anything Critical severity that has not reached a verdict
 yet), and a reorganization of `src/ct_hunter` into subpackages grouped
 by role (ingest, detect, enrich, storage, process, scripts) instead of
-18 flat files. See `docs/architecture.md` sections 13 through 21.
+18 flat files.
 
 Next: more CT sources watched in parallel, not just the one firehose.
