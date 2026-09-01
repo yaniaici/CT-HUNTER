@@ -170,45 +170,49 @@ Python 3.12, SQLite (no ORM, explicit SQL), Streamlit, dnspython,
 rapidfuzz, tldextract, networkx + pyvis, Playwright + imagehash,
 systemd user services. Dependency management via `uv`.
 
-## Project status
+## Roadmap
 
-v1: ingestion, detection, storage, scoring, visual comparison, and
-external reputation (own ASN correlation, URLscan, optional
-VirusTotal/AbuseIPDB) all working end to end.
+Shipped and running live, grouped by area rather than by release:
 
-v2: infrastructure correlation graph (IP/ASN/registrar/nameserver,
-not just a flat ASN match), a reliability audit that found and fixed four
-real production bugs (no process supervision across reboots/crashes, no
-error handling in the ingestion path, a dashboard crash on stale filter
-state, an on-demand task timeout crashing the whole session), SQLite
-WAL mode plus log rotation for both processes, a performance pass
-(cached dashboard status calls, vectorized table styling, three new
-indexes, `synchronous=NORMAL`, parallelized DNS/reputation enrichment,
-Playwright browser reuse for visual comparison, a precomputed brand
-whitelist on the ingestion hot path), SQL-side pagination for the
-Detections tab, an Overview tab (KPIs, charts, a read-only Alerts
-section for anything Critical severity that has not reached a verdict
-yet), and a reorganization of `src/ct_hunter` into subpackages grouped
-by role (ingest, detect, enrich, storage, process, scripts) instead of
-18 flat files.
+**Core pipeline**
+- [x] Real-time CT log ingestion, typosquat detection, SQLite storage, scoring
+- [x] Visual comparison (screenshot + perceptual hash) against a brand's real site
+- [x] Corroboration before anything is called confirmed: public feed match,
+      VirusTotal vote threshold, explicit URLscan verdict, or human verdict
 
-v3 (current): a detection-engine audit, then fixes verified against real
-production data rather than reasoning about them abstractly. Regional
-subsidiary domains (Santander MX/BR/UY, BBVA CO/MX, DHL AU/TR, and
-amazon.dev, an internal AWS domain the tld-swap fix below started
-flagging within minutes of shipping) were false-positiving as
-subdomain-impersonation, fixed in `config/brands.yaml` and backed out of
-the database. WHOIS creation date, already fetched and shown to the
-human, now also feeds a scoring bonus for freshly-registered domains
-instead of being discarded. `PHISHING_KEYWORDS` gained Spanish
-equivalents, 3 of the 10 target brands are Spanish-market and the list
-was 100% English. A `tld-swap` gap closed: an exact brand label under an
-unenumerated TLD (`microsoft.support`) used to slip past both the
-precomputed index and the fuzzy fallback; it is now a suffix-agnostic
-O(1) label check instead of a fixed TLD list. `ct-hunter-reevaluate` is
-new: detection-logic fixes used to only apply going forward, this
-re-checks the whole backlog against current logic and discards rows
-that no longer match (skips `confirmado_malicioso` rows, those need a
-human), first run cleared 47 fossilized false positives in 0.11s.
+**Enrichment & correlation**
+- [x] External reputation: own ASN correlation, URLscan, optional VirusTotal/AbuseIPDB
+- [x] Infrastructure correlation graph (shared IP/ASN/registrar/nameserver,
+      not just a flat ASN match), with known generic hosting/parking
+      providers excluded from correlation
 
-Next: more CT sources watched in parallel, not just the one firehose.
+**Reliability**
+- [x] systemd user services with crash-restart, instead of a background
+      process that dies on reboot
+- [x] SQLite WAL mode plus log rotation for both processes
+- [x] Reliability audit that found and fixed four real production bugs:
+      no process supervision across reboots/crashes, no error handling
+      in the ingestion path, a dashboard crash on stale filter state,
+      an on-demand task timeout crashing the whole session
+
+**Performance**
+- [x] Cached dashboard status calls, vectorized table styling
+- [x] Three new indexes, `synchronous=NORMAL`
+- [x] Parallelized DNS/reputation enrichment
+- [x] Playwright browser reuse for visual comparison
+- [x] Precomputed brand whitelist on the ingestion hot path
+- [x] SQL-side pagination for the Detections tab
+
+**Dashboard & UX**
+- [x] Overview tab: KPIs, charts, a read-only Alerts section for anything
+      Critical severity that has not reached a verdict yet
+- [x] Detections tab with per-domain investigation panel
+
+**Codebase**
+- [x] `src/ct_hunter` reorganized into subpackages grouped by role
+      (ingest, detect, enrich, storage, process, scripts) instead of
+      18 flat files
+
+### Planned
+
+- [ ] More CT sources watched in parallel, not just the one firehose
