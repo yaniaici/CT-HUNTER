@@ -1,8 +1,15 @@
 # ct-hunter
 
+![Python](https://img.shields.io/badge/python-3.12-blue)
+![Streamlit](https://img.shields.io/badge/dashboard-streamlit-ff4b4b)
+![SQLite](https://img.shields.io/badge/storage-sqlite-003b57)
+![systemd](https://img.shields.io/badge/runtime-systemd-orange)
+
 Watches Certificate Transparency logs in real time and flags
 typosquatting domains as soon as a certificate is issued for them,
 usually before there's even a page live on the domain.
+
+![Overview tab: KPIs, an alerts queue for anything Critical severity still awaiting a verdict, and detection trend charts](docs/screenshots/overview.png)
 
 ## Why CT logs
 
@@ -30,6 +37,17 @@ once.
 `docs/architecture.md` is a running log of the decisions and the bugs,
 kept up to date as I went, mostly so I can still explain any of it
 later without having to re-derive the reasoning from the code.
+
+```mermaid
+flowchart LR
+    A[Certificate Transparency logs] -->|WebSocket firehose| B[ingest]
+    B --> C["detect<br/>typosquat engine"]
+    C --> D[(SQLite)]
+    D --> E["enrich<br/>DNS, WHOIS, reputation"]
+    E --> F[score]
+    F --> D
+    D --> G["dashboard<br/>review + verdict"]
+```
 
 ## A few things worth pointing out
 
@@ -69,11 +87,7 @@ concurrently, a UI that shows a warning instead of crashing when a
 subprocess call times out. Documented in the architecture log along
 with why, since that's usually the part that gets skipped.
 
-The dashboard itself is built to investigate a domain, not just list
-it: pick one and see its DNS resolution, WHOIS, a visual comparison
-(screenshot plus perceptual hash against the real brand's site),
-external reputation, and whatever other tracked domains share its
-infrastructure, before deciding what to do with it.
+![Detections tab: a selected domain's investigation panel, severity and status badges, first/last seen, DNS enrichment, WHOIS and reputation lookups](docs/screenshots/detections.png)
 
 ## Quickstart
 
@@ -144,6 +158,8 @@ the resulting clusters. Known generic hosting/parking providers (Sedo,
 AWS, etc.) are excluded from correlation; see `docs/architecture.md`
 section 10 for why and how that was found.
 
+![Infrastructure graph: domains connected through shared IP/ASN/registrar/nameserver, star-shaped clusters mean shared infrastructure, not coincidence](docs/screenshots/graph.png)
+
 ## Case reports
 
 [`reports/`](reports/) has a writeup for each domain that reached a
@@ -176,8 +192,10 @@ WAL mode plus log rotation for both processes, a performance pass
 indexes, `synchronous=NORMAL`, parallelized DNS/reputation enrichment,
 Playwright browser reuse for visual comparison, a precomputed brand
 whitelist on the ingestion hot path), SQL-side pagination for the
-Detections tab, and an Overview tab (KPIs, charts, a read-only Alerts
+Detections tab, an Overview tab (KPIs, charts, a read-only Alerts
 section for anything Critical severity that has not reached a verdict
-yet). See `docs/architecture.md` sections 13 through 20.
+yet), and a reorganization of `src/ct_hunter` into subpackages grouped
+by role (ingest, detect, enrich, storage, process, scripts) instead of
+18 flat files. See `docs/architecture.md` sections 13 through 21.
 
 Next: more CT sources watched in parallel, not just the one firehose.
