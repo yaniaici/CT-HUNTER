@@ -29,7 +29,7 @@ from ct_hunter.enrich.visual import VISUAL_SIMILARITY_THRESHOLD, compare_visual
 from ct_hunter.graph import build_graph, cluster_for_domain, connected_clusters, render_html, shared_attributes_for_domain
 from ct_hunter.process.control import PROJECT_ROOT, docker_status, hunt_status, start_hunt, stop_hunt
 from ct_hunter.report import write_report
-from ct_hunter.scoring import MAX_SCORE, reputation_bonus, score_detection
+from ct_hunter.scoring import FRESH_DOMAIN_AGE_DAYS, MAX_SCORE, domain_age_bonus, reputation_bonus, score_detection
 from ct_hunter.storage.db import (
     VALID_STATUSES,
     get_connection,
@@ -42,7 +42,7 @@ from ct_hunter.storage.db import (
 
 st.set_page_config(page_title="CT Hunter", page_icon="🎣", layout="wide")
 
-# An unresponsive (not NXDOMAIN) nameserver can cost up to ~9s per domain
+# An unresponsive (not NXDOMAIN) nameserver can cost up to ~9s per domains
 # (enrich/dns.py tries A, then AAAA, then MX, 3s timeout each). enrich_pending.py
 # now resolves up to MAX_WORKERS domains concurrently, so the worst case for
 # a batch of N domains is roughly ceil(N / MAX_WORKERS) * 9s, not N * 9s;
@@ -643,7 +643,13 @@ with tab_detections:
                             info = whois_lookup(reg_domain)
                             st.session_state[f"whois_result_{domain}"] = info
                             if "error" not in info and (info.get("registrar") or info.get("nameservers")):
-                                update_whois(conn, domain, info.get("registrar"), info.get("nameservers"))
+                                current_score = row["score"] if pd.notna(row["score"]) else 0
+                                bonus = domain_age_bonus(info.get("creation_date_ts"))
+                                new_score = min(current_score + bonus, MAX_SCORE)
+                                update_whois(
+                                    conn, domain, info.get("registrar"), info.get("nameservers"),
+                                    info.get("creation_date_ts"), new_score,
+                                )
                                 st.cache_resource.clear()
                     if inv2.button("🌐 Check the website", key=f"http_btn_{domain}"):
                         with st.spinner("Connecting..."):
@@ -654,8 +660,17 @@ with tab_detections:
                         if "error" in whois_result:
                             st.warning(f"WHOIS lookup failed: {whois_result['error']}")
                         else:
+                            age_note = ""
+                            creation_ts = whois_result.get("creation_date_ts")
+                            if creation_ts is not None:
+                                age_days = int((time.time() - creation_ts) / 86400)
+                                age_note = f" ({age_days} days old"
+                                age_note += (
+                                    ", fresh domain bonus applied)"
+                                    if 0 <= age_days <= FRESH_DOMAIN_AGE_DAYS else ")"
+                                )
                             st.write(
-                                f"Created: **{whois_result['creation_date']}** · "
+                                f"Created: **{whois_result['creation_date']}**{age_note} · "
                                 f"Registrar: **{whois_result['registrar']}** · "
                                 f"Registrant country: **{whois_result['registrant_country']}**"
                             )

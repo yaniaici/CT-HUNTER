@@ -127,6 +127,7 @@ uv run ct-hunter-reputation   # ASN + own infrastructure reuse + AbuseIPDB
 uv run ct-hunter-crosscheck   # OpenPhish + URLscan (+ VirusTotal if an API key is set)
 uv run ct-hunter-whois        # registrar + nameservers, feeds the infrastructure graph
 uv run ct-hunter-triage       # moves 'New' to 'Monitoring' for exact-match techniques (backlog only, new detections get this automatically)
+uv run ct-hunter-reevaluate   # re-checks the backlog against current detection logic, discards rows that no longer match
 ```
 
 `ct-hunter-crosscheck` and `ct-hunter-reputation` use free external

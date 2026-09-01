@@ -10,6 +10,7 @@ dependencies = [
     "networkx>=3.6.1",
     "pandas>=3.0.5",
     "playwright>=1.62.0",
+    "python-dateutil>=2.9.0",
     "python-dotenv>=1.2.3",
     "pyvis>=0.3.2",
     "pyyaml>=6.0.3",
@@ -28,6 +29,7 @@ ct-hunter-report = "ct_hunter.scripts.generate_report:main"
 ct-hunter-reputation = "ct_hunter.scripts.enrich_reputation:main"
 ct-hunter-whois = "ct_hunter.scripts.enrich_whois:main"
 ct-hunter-triage = "ct_hunter.scripts.auto_triage:main"
+ct-hunter-reevaluate = "ct_hunter.scripts.reevaluate:main"
 
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]

@@ -13,7 +13,7 @@ import sys
 import time
 
 from ct_hunter.brands import load_brands
-from ct_hunter.detect.similarity import build_variant_index, build_whitelist, evaluate_hostname
+from ct_hunter.detect.similarity import build_tld_swap_labels, build_variant_index, build_whitelist, evaluate_hostname
 from ct_hunter.ingest.certstream_client import stream_certificates
 from ct_hunter.process.logging_setup import configure_hunt_logging
 from ct_hunter.process.state import claim_single_instance, write_status
@@ -28,6 +28,7 @@ async def _run() -> None:
     brands = load_brands()
     variant_index = build_variant_index(brands)
     whitelist = build_whitelist(brands)
+    tld_swap_labels = build_tld_swap_labels(brands)
     conn = get_connection()
     init_db(conn)
 
@@ -44,7 +45,7 @@ async def _run() -> None:
         seen += 1
         for hostname in event.all_domains:
             try:
-                match = evaluate_hostname(hostname, brands, variant_index, whitelist)
+                match = evaluate_hostname(hostname, brands, variant_index, whitelist, tld_swap_labels)
                 if match is None:
                     continue
                 hits += 1

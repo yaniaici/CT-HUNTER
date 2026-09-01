@@ -37,6 +37,7 @@ brands:
     domain: amazon.com
     aliases:
       - amazon.es
+      - amazon.dev  # AWS internal service naming (gamma/message-relay/ring), certs issued by Amazon's own CA, found live 2026-09-01 right after the tld-swap fix started catching it
 
   - name: Netflix
     category: tech

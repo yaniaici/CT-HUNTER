@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS detections (
     asn_org             TEXT,
     registrar           TEXT,
     nameservers         TEXT,
+    domain_created_at   REAL,
     external_intel      TEXT,
     score               REAL,
     status              TEXT NOT NULL DEFAULT 'nuevo'
@@ -109,6 +110,7 @@ def init_db(conn: sqlite3.Connection) -> None:
         "asn_org TEXT",
         "registrar TEXT",
         "nameservers TEXT",
+        "domain_created_at REAL",
         "external_intel TEXT",
     ):
         try:
@@ -256,9 +258,25 @@ def update_whois(
     domain: str,
     registrar: str | None,
     nameservers: list[str] | None,
+    domain_created_at: float | None,
+    score: float | None,
 ) -> None:
+    """score is the caller's responsibility (current score + whatever
+    scoring.domain_age_bonus() adds), same pattern as update_reputation:
+    each on-demand enrichment step knows its own bonus, not the others'."""
     conn.execute(
-        "UPDATE detections SET registrar = ?, nameservers = ?, updated_at = ? WHERE domain = ?",
-        (registrar, ",".join(nameservers) if nameservers else None, time.time(), domain),
+        """
+        UPDATE detections
+        SET registrar = ?, nameservers = ?, domain_created_at = ?, score = ?, updated_at = ?
+        WHERE domain = ?
+        """,
+        (
+            registrar,
+            ",".join(nameservers) if nameservers else None,
+            domain_created_at,
+            score,
+            time.time(),
+            domain,
+        ),
     )
     conn.commit()

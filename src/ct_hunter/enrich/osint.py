@@ -14,10 +14,24 @@ import re
 import subprocess
 
 import requests
+from dateutil import parser as dateutil_parser
 
 WHOIS_TIMEOUT_SECONDS = 10
 HTTP_TIMEOUT_SECONDS = 8
 HTTP_USER_AGENT = "Mozilla/5.0 (ct-hunter personal research project)"
+
+
+def _parse_creation_date(raw: str | None) -> float | None:
+    """Unix timestamp from a WHOIS creation-date string, or None if it is
+    missing or unparseable. Registries do not agree on a format (ISO 8601,
+    'DD-Mon-YYYY', dotted, with or without time/timezone), dateutil covers
+    the realistic spread without a hand-rolled parser per registry."""
+    if not raw:
+        return None
+    try:
+        return dateutil_parser.parse(raw).timestamp()
+    except (ValueError, OverflowError, TypeError):
+        return None
 
 
 def whois_lookup(domain: str) -> dict:
@@ -40,8 +54,11 @@ def whois_lookup(domain: str) -> dict:
     # Nameservers usually appear as several repeated "Name Server:" lines.
     nameservers = sorted({ns.strip().lower().rstrip(".") for ns in re.findall(r"Name Server:\s*(.+)", raw, re.IGNORECASE)})
 
+    creation_date = _find(r"Creation Date:\s*(.+)")
+
     return {
-        "creation_date": _find(r"Creation Date:\s*(.+)"),
+        "creation_date": creation_date,
+        "creation_date_ts": _parse_creation_date(creation_date),
         "registrar": _find(r"Registrar:\s*(.+)"),
         "registrant_country": _find(r"Registrant Country:\s*(.+)"),
         "nameservers": nameservers,

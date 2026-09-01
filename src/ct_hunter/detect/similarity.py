@@ -34,6 +34,11 @@ from ct_hunter.brands import Brand
 PHISHING_KEYWORDS = (
     "login", "secure", "verify", "account", "signin",
     "portal", "support", "id", "auth", "banking",
+    # Spanish equivalents: 3 of the 10 target brands (BBVA, Santander,
+    # Correos) are Spanish-market, a real phishing kit against them would
+    # use these words, not the English ones above.
+    "banca", "clientes", "seguridad", "confirmar", "verificar",
+    "actualizar", "acceso", "clave", "recuperar", "restablecer",
 )
 COMMON_TLDS = ("com", "net", "org", "info", "xyz", "top", "online", "site", "click", "live")
 
@@ -61,6 +66,17 @@ KNOWN_CASB_WRAPPER_DOMAINS = {
     # Government Cloud variants, found in production data correlating
     # against amazon.com and microsoft.com subdomains via the graph tool.
     "mcas-gov.us", "admin-mcas-gov.us", "mcas-df-gov.us", "admin-mcas-df-gov.us",
+}
+
+# "Wildcard DNS as a service": any hostname ending in one of these,
+# with an IP address embedded in the labels before it, resolves straight
+# to that IP (e.g. 'foo.10.0.0.1.sslip.io' -> 10.0.0.1). Free, instant,
+# and requires no registration of its own, so WHOIS on the eTLD+1 only
+# ever describes the provider (registered years ago), never the attacker
+# behind a specific subdomain. Used by enrich_whois.py to skip a WHOIS
+# lookup that cannot produce a useful "freshly registered" signal.
+DYNAMIC_DNS_SUFFIXES = {
+    "sslip.io", "nip.io", "xip.io", "traefik.me",
 }
 
 LEVENSHTEIN_THRESHOLD = 2  # absolute distance, only a quick pre-filter before computing the ratio
@@ -156,7 +172,14 @@ def generate_variants(brand: Brand) -> dict[str, str]:
     label, suffix = parts.domain, parts.suffix
     tlds = {suffix, *COMMON_TLDS}
 
-    label_variants: dict[str, str] = {label: "tld-swap"}  # same label, different TLD
+    # The exact-label, any-suffix case (plain tld-swap) is handled by
+    # build_tld_swap_labels()/match_registrable_domain() instead of being
+    # seeded here: pairing the unmutated label with only COMMON_TLDS would
+    # miss a suffix outside that fixed list (confirmed gap: 'microsoft.support',
+    # 'paypal.security', exact label, unenumerated TLD, caught by neither
+    # this index nor the Levenshtein fallback, since comparing full strings
+    # also penalizes for the suffix difference).
+    label_variants: dict[str, str] = {}
     for labels, technique in (
         (_omissions(label), "omission"),
         (_repetitions(label), "repetition"),
@@ -187,6 +210,18 @@ def build_variant_index(brands: list[Brand]) -> dict[str, tuple[str, str]]:
     return index
 
 
+def build_tld_swap_labels(brands: list[Brand]) -> dict[str, str]:
+    """label -> brand_name, for exact-label/any-suffix tld-swap detection.
+    A fixed TLD list (COMMON_TLDS) can never enumerate every suffix a real
+    attacker might use, this is suffix-agnostic on purpose: an O(1) label
+    lookup instead of an enumerated set of tld combinations."""
+    labels: dict[str, str] = {}
+    for brand in brands:
+        label = _extract(brand.domain).domain
+        labels.setdefault(label, brand.name)
+    return labels
+
+
 def build_whitelist(brands: list[Brand]) -> set[str]:
     """Every brand's legitimate domains, merged. Precomputed once (same
     pattern as build_variant_index) instead of being rebuilt on every
@@ -204,6 +239,7 @@ def match_registrable_domain(
     brands: list[Brand],
     variant_index: dict[str, tuple[str, str]],
     whitelist: set[str],
+    tld_swap_labels: dict[str, str] | None = None,
 ) -> SimilarityMatch | None:
     """Compares a registrable domain (eTLD+1) against brands + variants."""
     if _is_whitelisted(candidate, whitelist):
@@ -213,6 +249,16 @@ def match_registrable_domain(
     if hit is not None:
         brand_name, technique = hit
         return SimilarityMatch(brand=brand_name, technique=technique, candidate=candidate)
+
+    # Exact label, any suffix (see build_tld_swap_labels): whatever
+    # reaches this point is already confirmed not whitelisted, so a label
+    # match here cannot be a brand's own real domain, only a lookalike
+    # suffix.
+    if tld_swap_labels:
+        cand_label = _extract(candidate).domain
+        brand_name = tld_swap_labels.get(cand_label)
+        if brand_name is not None:
+            return SimilarityMatch(brand=brand_name, technique="tld-swap", candidate=candidate)
 
     # Unicode homoglyphs: normalize and try the index again.
     normalized = normalize_confusables(decode_idn(candidate))
@@ -262,7 +308,9 @@ def match_subdomain_impersonation(hostname: str, brands: list[Brand], whitelist:
     for brand in brands:
         for legit in brand.legitimate_domains:
             if f".{legit}." in padded_host and real_registrable != legit:
-                return SimilarityMatch(brand=brand.name, technique="subdomain-impersonation", candidate=hostname)
+                return SimilarityMatch(
+                    brand=brand.name, technique="subdomain-impersonation", candidate=real_registrable
+                )
     return None
 
 
@@ -271,20 +319,24 @@ def evaluate_hostname(
     brands: list[Brand],
     variant_index: dict[str, tuple[str, str]],
     whitelist: set[str] | None = None,
+    tld_swap_labels: dict[str, str] | None = None,
 ) -> SimilarityMatch | None:
     """Single entry point: applies all three detection layers to a raw
     hostname exactly as it comes from `all_domains` in the certificate.
 
-    whitelist is optional and built on the fly from brands if not given,
-    so existing one-off callers (the dashboard's "Test a domain" tab)
-    don't have to precompute it; hunt.py, which calls this once per
-    hostname for the whole firehose, passes a precomputed one instead."""
+    whitelist/tld_swap_labels are optional and built on the fly from
+    brands if not given, so existing one-off callers (the dashboard's
+    "Test a domain" tab) don't have to precompute them; hunt.py, which
+    calls this once per hostname for the whole firehose, passes
+    precomputed ones instead."""
     if whitelist is None:
         whitelist = build_whitelist(brands)
+    if tld_swap_labels is None:
+        tld_swap_labels = build_tld_swap_labels(brands)
 
     subdomain_hit = match_subdomain_impersonation(hostname, brands, whitelist)
     if subdomain_hit is not None:
         return subdomain_hit
 
     candidate = registrable_domain(hostname)
-    return match_registrable_domain(candidate, brands, variant_index, whitelist)
+    return match_registrable_domain(candidate, brands, variant_index, whitelist, tld_swap_labels)
