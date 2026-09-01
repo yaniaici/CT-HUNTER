@@ -53,12 +53,16 @@ brands:
     domain: dhl.com
     aliases:
       - dhl.de
+      - dhl.com.au  # DHL Australia, verified via WHOIS (F5 enterprise DNS)
+      - dhl.com.tr  # DHL Turkey, verified via WHOIS (F5 enterprise DNS)
 
   - name: BBVA
     category: banking
     domain: bbva.es
     aliases:
       - bbva.com
+      - bbva.com.co  # BBVA Colombia, verified via WHOIS (registered 2000) + live site
+      - bbva.com.mx  # BBVA Mexico, verified via live site (redirects to bbva.mx)
 
   - name: Santander
     category: banking
@@ -67,3 +71,6 @@ brands:
       - bancosantander.es
       - santander.com
       - santander.com.co  # Banco Santander Colombia, verified 2026-08-21
+      - santander.com.mx  # Banco Santander Mexico, verified via live site
+      - santander.com.br  # Banco Santander Brazil, verified via live site
+      - santander.com.uy  # Banco Santander Uruguay, verified via live site

@@ -175,8 +175,8 @@ v1: ingestion, detection, storage, scoring, visual comparison, and
 external reputation (own ASN correlation, URLscan, optional
 VirusTotal/AbuseIPDB) all working end to end.
 
-v2: infrastructure correlation graph (IP/ASN/registrar/nameserver, not
-just a flat ASN match), a reliability audit that found and fixed four
+v2 (current): infrastructure correlation graph (IP/ASN/registrar/nameserver,
+not just a flat ASN match), a reliability audit that found and fixed four
 real production bugs (no process supervision across reboots/crashes, no
 error handling in the ingestion path, a dashboard crash on stale filter
 state, an on-demand task timeout crashing the whole session), SQLite
@@ -189,6 +189,6 @@ Detections tab, an Overview tab (KPIs, charts, a read-only Alerts
 section for anything Critical severity that has not reached a verdict
 yet), and a reorganization of `src/ct_hunter` into subpackages grouped
 by role (ingest, detect, enrich, storage, process, scripts) instead of
-18 flat files.
+18 flat files. Shipped and running live.
 
-Next: more CT sources watched in parallel, not just the one firehose.
+Next (v3): more CT sources watched in parallel, not just the one firehose.
