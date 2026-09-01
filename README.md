@@ -169,26 +169,49 @@ Python 3.12, SQLite (no ORM, explicit SQL), Streamlit, dnspython,
 rapidfuzz, tldextract, networkx + pyvis, Playwright + imagehash,
 systemd user services. Dependency management via `uv`.
 
-## Project status
+## Roadmap
 
-v1: ingestion, detection, storage, scoring, visual comparison, and
-external reputation (own ASN correlation, URLscan, optional
-VirusTotal/AbuseIPDB) all working end to end.
+Shipped and running live, grouped by area rather than by release:
 
-v2 (current): infrastructure correlation graph (IP/ASN/registrar/nameserver,
-not just a flat ASN match), a reliability audit that found and fixed four
-real production bugs (no process supervision across reboots/crashes, no
-error handling in the ingestion path, a dashboard crash on stale filter
-state, an on-demand task timeout crashing the whole session), SQLite
-WAL mode plus log rotation for both processes, a performance pass
-(cached dashboard status calls, vectorized table styling, three new
-indexes, `synchronous=NORMAL`, parallelized DNS/reputation enrichment,
-Playwright browser reuse for visual comparison, a precomputed brand
-whitelist on the ingestion hot path), SQL-side pagination for the
-Detections tab, an Overview tab (KPIs, charts, a read-only Alerts
-section for anything Critical severity that has not reached a verdict
-yet), and a reorganization of `src/ct_hunter` into subpackages grouped
-by role (ingest, detect, enrich, storage, process, scripts) instead of
-18 flat files. Shipped and running live.
+**Core pipeline**
+- [x] Real-time CT log ingestion, typosquat detection, SQLite storage, scoring
+- [x] Visual comparison (screenshot + perceptual hash) against a brand's real site
+- [x] Corroboration before anything is called confirmed: public feed match,
+      VirusTotal vote threshold, explicit URLscan verdict, or human verdict
 
-Next (v3): more CT sources watched in parallel, not just the one firehose.
+**Enrichment & correlation**
+- [x] External reputation: own ASN correlation, URLscan, optional VirusTotal/AbuseIPDB
+- [x] Infrastructure correlation graph (shared IP/ASN/registrar/nameserver,
+      not just a flat ASN match), with known generic hosting/parking
+      providers excluded from correlation
+
+**Reliability**
+- [x] systemd user services with crash-restart, instead of a background
+      process that dies on reboot
+- [x] SQLite WAL mode plus log rotation for both processes
+- [x] Reliability audit that found and fixed four real production bugs:
+      no process supervision across reboots/crashes, no error handling
+      in the ingestion path, a dashboard crash on stale filter state,
+      an on-demand task timeout crashing the whole session
+
+**Performance**
+- [x] Cached dashboard status calls, vectorized table styling
+- [x] Three new indexes, `synchronous=NORMAL`
+- [x] Parallelized DNS/reputation enrichment
+- [x] Playwright browser reuse for visual comparison
+- [x] Precomputed brand whitelist on the ingestion hot path
+- [x] SQL-side pagination for the Detections tab
+
+**Dashboard & UX**
+- [x] Overview tab: KPIs, charts, a read-only Alerts section for anything
+      Critical severity that has not reached a verdict yet
+- [x] Detections tab with per-domain investigation panel
+
+**Codebase**
+- [x] `src/ct_hunter` reorganized into subpackages grouped by role
+      (ingest, detect, enrich, storage, process, scripts) instead of
+      18 flat files
+
+### Planned
+
+- [ ] More CT sources watched in parallel, not just the one firehose
